@@ -33,11 +33,13 @@ All landing calls to action converge on the same creation Step 1. Template cards
 
 ### 3.2 Creation flow
 
-The creation flow contains three steps:
+The landing hero input is the entry to the three-step creation flow, not a separate preliminary step. Its value is saved locally and carried into the creation experience, so the user never re-enters the same request.
 
-- **Describe:** A guest enters a natural-language request. The page shows generating, failure, and retry states. Failure never clears the user's text. One guest preview is allowed before authentication and protected by rate limiting.
-- **Review rules:** The original request remains visible. Subject, included topics, exclusions, one generated search query, and importance threshold are editable. One optional RSS source may be selected from a server-configured allowlist. Source-trust policy and the six-hour interval are fixed MVP defaults and are labelled as such.
-- **Activate:** Authentication is required only after the user has seen the preview. The draft is preserved locally during sign-up and restored after redirect. A Radar may be active without Telegram: it monitors and stores findings but cannot deliver alerts. The UI therefore distinguishes `Active · alerts off` from `Active · Telegram connected`. The first manual action is “Build baseline now,” not “Check now.”
+- **Step 1 — AI understands:** Clicking the hero or final CTA carries the existing request into an AI-processing state. It shows the original text, generating progress, failure, and retry. Failure never clears the draft. One guest preview is allowed before authentication and protected by rate limiting.
+- **Step 2 — Review rules:** The original request remains visible. Subject, included topics, exclusions, one generated search query, and importance threshold are editable. One optional RSS source may be selected from a server-configured allowlist. Source-trust policy and the six-hour interval are fixed MVP defaults and are labelled as such.
+- **Step 3 — Sign up and activate:** Authentication is required only after the preview. The draft is preserved locally during sign-up and restored after redirect, then the user activates the Radar.
+
+Baseline creation and Telegram connection are post-activation onboarding, not a fourth creation step. A Radar may remain active without Telegram: it monitors and stores findings but cannot deliver alerts. The UI distinguishes `Active · alerts off` from `Active · Telegram connected`. The first post-activation action is “Build baseline now,” followed by “Connect Telegram” or “Not now.”
 
 ### 3.3 Dashboard and Radar detail
 
@@ -169,5 +171,7 @@ If time becomes constrained, retain the real end-to-end LISA path and cut second
 
 ## 12. Prototype references
 
-- Canonical implementation reference: `.superpowers/brainstorm/72782-1785830353/content/watch-anything-canonical-v1.html`
-- Earlier HTML files are exploration artifacts only. If they conflict with the canonical prototype or this document, they are not requirements.
+- Landing and three-step flow visual reference: `.superpowers/brainstorm/62653-1785776069/content/landing-combined-v3.html`
+- Dashboard/create visual reference: `.superpowers/brainstorm/72782-1785830353/content/dashboard-create-flow-v1.html`
+- Radar detail/run-history visual reference: `.superpowers/brainstorm/72782-1785830353/content/radar-detail-runs-v1.html`
+- `.superpowers/brainstorm/72782-1785830353/content/watch-anything-canonical-v1.html` is a rejected exploration artifact. It may inform state logic but must not be used as a visual reference.
