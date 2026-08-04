@@ -36,11 +36,13 @@ All landing calls to action converge on the hero request input. `Get started` fo
 
 The landing hero input starts creation. Its value is saved locally, and the user never re-enters the same request.
 
-1. **Inline AI processing:** The Landing page shows short generating, failure, and retry feedback directly below the request input. Failure never clears the request. When generation succeeds, the user moves directly to the rules page. Guest previews are protected by the limits in Section 8.
-2. **Review rules page:** The original request remains visible. Radar name, subject, included topics, exclusions, one generated search query, and importance threshold are editable. The fixed six-hour schedule and trusted-public-information policy are shown in user language; provider names such as Tavily and RSS are not presented as product concepts.
-3. **Auth page when required:** An unauthenticated user continues to the dedicated Auth page in login mode, with Sign up available as the secondary path. Either successful path restores the confirmed draft.
-4. **Telegram connection page when required:** A signed-in user without a Telegram connection continues to the dedicated connection page. It shows the shared Bot identity, one-time link, required `Start` action, waiting/failure states, and return confirmation.
+1. **Inline AI processing:** The Landing page shows short generating, failure, and retry feedback directly below the request input. Failure never clears the request. When generation succeeds, the browser navigates to `/rules`. Guest previews are protected by the limits in Section 8.
+2. **Review rules page (`/rules`):** The original request remains visible. Radar name, subject, included topics, exclusions, one generated search query, and importance threshold are editable. The fixed six-hour schedule and trusted-public-information policy are shown in user language; provider names such as Tavily and RSS are not presented as product concepts.
+3. **Auth page (`/auth`):** An unauthenticated user navigates to a dedicated Auth page in login mode, with Sign up available as the secondary path. Either successful path restores the confirmed draft and continues to the next page.
+4. **Telegram connection page (`/connect-telegram`):** A signed-in user without a Telegram connection navigates to the dedicated connection page. It shows the shared Bot identity, one-time link, required `Start` action, waiting/failure states, and return confirmation.
 5. **Create:** A returning user who is already authenticated and connected creates another Radar immediately after confirming rules. Auth and Telegram are never repeated unnecessarily.
+
+These are independent pages, not modal panels. Browser Back, refresh, and direct links must preserve or clearly report the saved draft state. The prototype uses separate HTML screens for these routes; the production app maps them to Next.js routes.
 
 The confirmed rule draft may exist locally or be temporarily associated with the authenticated user, but it is not a Radar and cannot run. Creating the Radar writes `baseline_cutoff_at` and immediately starts the first silent baseline. Telegram is mandatory for activating a Radar, so there is no `Active · alerts off` state. At three active Radars, another draft may be saved, but activation requires the user to pause one active Radar; the system never pauses a Radar automatically.
 
