@@ -8,10 +8,11 @@ The four-day MVP succeeds when a reviewer can complete this real loop:
 
 1. Enter a monitoring request without signing in.
 2. Let AI generate an editable rules draft.
-3. Register, save the draft, and activate a Radar.
-4. Connect one shared Telegram bot.
-5. Trigger or wait for a real monitoring run.
-6. See the run history and receive a relevant, deduplicated Telegram alert.
+3. Sign up or log in, then restore the confirmed draft.
+4. Connect the shared Telegram bot.
+5. Create the Radar only after both requirements are complete.
+6. Trigger or wait for a real monitoring run.
+7. See the run history and receive a relevant, deduplicated Telegram alert.
 
 The reference demo is a “LISA Official Radar.” It includes new music, tours, important brand partnerships, and official announcements. It excludes rumours, fan speculation, old news, and repeated reports.
 
@@ -37,13 +38,13 @@ The landing hero input is the entry to the three-step creation flow, not a separ
 
 - **Step 1 — AI understands:** Clicking the hero or final CTA carries the existing request into an AI-processing state. It shows the original text, generating progress, failure, and retry. Failure never clears the draft. One guest preview is allowed before authentication and protected by rate limiting.
 - **Step 2 — Review rules:** The original request remains visible. Subject, included topics, exclusions, one generated search query, and importance threshold are editable. One optional RSS source may be selected from a server-configured allowlist. Source-trust policy and the six-hour interval are fixed MVP defaults and are labelled as such.
-- **Step 3 — Sign up and activate:** Authentication is required only after the preview. The draft is preserved locally during sign-up and restored after redirect, then the user activates the Radar.
+- **Step 3 — Register and connect Telegram:** The requirement page contains two separate cards, not embedded forms. The account card opens a dedicated Auth page where a new user can switch between Sign up and Log in; either successful path restores the draft and returns to Step 3. Only then does the Telegram card unlock. It opens a dedicated connection page showing the Bot identity, the one-time-link flow, the required `Start` action, waiting/failure states, and return confirmation. The final “Create Radar” action remains disabled until both account authentication and Telegram binding are verified server-side.
 
-Baseline creation and Telegram connection are post-activation onboarding, not a fourth creation step. A Radar may remain active without Telegram: it monitors and stores findings but cannot deliver alerts. The UI distinguishes `Active · alerts off` from `Active · Telegram connected`. The first post-activation action is “Build baseline now,” followed by “Connect Telegram” or “Not now.”
+The confirmed rule draft may exist locally or be temporarily associated with the authenticated user, but it is not a Radar and cannot run. Creating the Radar writes `baseline_cutoff_at` and immediately starts the first silent baseline. Telegram is mandatory for this MVP, so there is no `Active · alerts off` state and no “Not now” path.
 
 ### 3.3 Dashboard and Radar detail
 
-The four-day UI combines the one-Radar overview and Radar detail rather than maintaining two overlapping information architectures. It answers whether monitoring is active, whether Telegram can receive alerts, what the latest run found, and what requires attention. A first-time state shows the restored Radar, baseline progress, zero notifications, and the next action.
+The four-day UI combines the one-Radar overview and Radar detail rather than maintaining two overlapping information architectures. It answers whether monitoring is active, whether Telegram is connected, what the latest run found, and what requires attention. A first-time state appears only after the required account and Telegram checks pass; it shows baseline progress, zero notifications, and the next scheduled action.
 
 The Radar detail page exposes its current rules, next run, recent findings, and run history. A run records sources checked, candidates found, relevant findings, notifications sent, duration, and per-source failures. “Partial success” lists the specific failed source and reason while preserving successful results from other sources.
 
@@ -55,7 +56,11 @@ The bot supports only `/start`, `/help`, and outbound notification delivery. Rad
 
 The connection flow clearly shows unconnected, connecting, connected, and failed states. A signed-in user requests a one-time opaque binding token. The database stores only its hash, owner, expiration, and `used_at`. The website opens `https://t.me/<bot>?start=<token>`; the webhook atomically consumes the token and binds that private-chat `chat_id`. Tokens expire, cannot be replayed, and a `chat_id` belongs to only one website account. The webhook validates Telegram's secret-token header. Group binding is unsupported.
 
-### 3.5 Language and responsive behavior
+### 3.5 Authentication pages
+
+Auth is a separate page from Step 3. It contains Sign up and Log in tabs, email/password fields, loading and clear retryable errors, plus a password-recovery entry for returning users. Successful authentication returns to the saved creation draft rather than the Dashboard. The server revalidates the restored draft before proceeding. The MVP may disable email confirmation for the portfolio demo only if that choice is explicit in Supabase configuration and the README; otherwise the callback flow must include a “check your email” state.
+
+### 3.6 Language and responsive behavior
 
 English and simplified Chinese use translation keys rather than runtime text replacement. Locale is persisted and applies to navigation, forms, errors, and Telegram notifications. Proper names and standard technical terms such as Watch Anything, LISA, OpenAI, AI, API, RSS, and Telegram remain unchanged where natural.
 
@@ -111,7 +116,7 @@ For every claimed Radar:
 8. Notify only findings that pass the configured threshold and have not been delivered before.
 9. Record the run as success, partial success, or failure, then schedule the next check.
 
-Activation sets `baseline_cutoff_at = activated_at`. The first run saves observations and sends zero alerts, regardless of Telegram state. Each RSS source records its own `baseline_completed_at`; a newly added source silently establishes its own baseline. A partial first run completes the baseline only for successful sources, while failed sources retry later. Items with no published time are silent during baseline; later novelty is based on `first_seen_at`. After baseline, “Check now” uses the same database claim and an atomic cooldown.
+Radar creation sets `baseline_cutoff_at = created_at` and queues the first run. The baseline saves observations and sends zero alerts even though Telegram is already connected. Each RSS source records its own `baseline_completed_at`; a newly added source silently establishes its own baseline. A partial first run completes the baseline only for successful sources, while failed sources retry later. Items with no published time are silent during baseline; later novelty is based on `first_seen_at`. After baseline, “Check now” uses the same database claim and an atomic cooldown.
 
 ## 7. AI responsibilities and safeguards
 
@@ -143,12 +148,12 @@ Testing focuses on the core loop and expensive failure points:
 - Integration tests for concurrent Cron/Check-now claims, expired-lease recovery, repeated findings, and idempotent notifications.
 - One end-to-end happy-path test from guest input through activation using mocked external providers.
 - Telegram webhook tests cover missing secrets, expired/replayed binding tokens, and already-bound chats. RLS tests use two users and every user-owned table.
-- Manual deployed smoke test covers registration, draft restoration, one real Tavily query, one RSS feed, baseline, one new finding, and one real Telegram message.
+- Manual deployed smoke tests cover both sign-up and returning-user login, draft restoration, one real Tavily query, one RSS feed, baseline, one new finding, and one real Telegram message.
 - Responsive checks at desktop and 390 px, plus English copy checks on the core flow. Chinese copy checks apply only if the stretch locale ships.
 
 ## 10. Four-day scope freeze and implementation priority
 
-The **must-ship freeze line** is one deployed LISA Radar: English core flow, guest preview, email/password sign-up with draft restoration, one Tavily query plus one allowlisted RSS feed, deterministic deduplication, baseline, one-Radar workspace/run history, Telegram one-time binding, one real notification, basic mobile usability, and the minimum RLS/idempotency/limit tests required to trust that path.
+The **must-ship freeze line** is one deployed LISA Radar: English core flow, guest preview, email/password sign-up and login with draft restoration, one Tavily query plus one allowlisted RSS feed, deterministic deduplication, baseline, one-Radar workspace/run history, Telegram one-time binding, one real notification, basic mobile usability, and the minimum RLS/idempotency/limit tests required to trust that path.
 
 **Stretch only after the deployed loop passes:** Chinese core copy, additional allowlisted RSS choices, templates beyond LISA, richer loading/error polish, extra automated tests, and presentation diagrams. Stretch work must never delay the real deployed smoke test.
 
