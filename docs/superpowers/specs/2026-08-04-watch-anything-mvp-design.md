@@ -142,7 +142,7 @@ Testing focuses on the core loop and expensive failure points:
 - One end-to-end happy-path test from guest input through activation using mocked external providers.
 - Telegram webhook tests cover missing secrets, expired/replayed binding tokens, and already-bound chats. RLS tests use two users and every user-owned table.
 - Manual deployed smoke test covers registration, draft restoration, one real Tavily query, one RSS feed, baseline, one new finding, and one real Telegram message.
-- Responsive checks at desktop and 390 px, plus English/Chinese copy checks on the core flow.
+- Responsive checks at desktop and 390 px, plus English copy checks on the core flow. Chinese copy checks apply only if the stretch locale ships.
 
 ## 10. Four-day scope freeze and implementation priority
 
@@ -151,9 +151,9 @@ The **must-ship freeze line** is one deployed LISA Radar: English core flow, gue
 **Stretch only after the deployed loop passes:** Chinese core copy, additional allowlisted RSS choices, templates beyond LISA, richer loading/error polish, extra automated tests, and presentation diagrams. Stretch work must never delay the real deployed smoke test.
 
 1. **Vertical deployment probe:** deploy Next.js/Supabase immediately; verify one hard-coded LISA Tavily/RSS request and one Telegram webhook message on the real `vercel.app` URL. Choose email/password Auth, configure production/local callbacks, and explicitly decide whether email confirmation is disabled for the demo.
-2. **Creation and persistence:** implement guest preview, draft recovery, strict AI rules, one-Radar CRUD, responsive bilingual core flow, RLS, and database constraints.
+2. **Creation and persistence:** implement guest preview, draft recovery, strict AI rules, one-Radar CRUD, responsive English core flow, RLS, and database constraints. Add Chinese only after the deployed must-ship loop passes.
 3. **Monitoring:** implement one-Radar claim/lease, Tavily + RSS, deterministic fingerprints, baseline, evaluation, run history, and notification idempotency.
-4. **Stabilize and present:** complete Telegram one-time binding, deployed smoke test, failure states, quota caps, README, environment template, architecture/data-flow/state diagrams, three-minute demo script, and GitHub upload.
+4. **Stabilize and present:** complete Telegram one-time binding, deployed smoke test, failure states, quota caps, README, environment template, three-minute demo script, and GitHub upload. Architecture/data-flow/state diagrams are stretch documentation.
 
 If time becomes constrained, retain the real end-to-end LISA path and cut secondary polish. Do not replace the working pipeline with fake results. Before any interview, run the smoke checklist within 24 hours and keep a short recording as evidence if a free external service is temporarily unavailable.
 
