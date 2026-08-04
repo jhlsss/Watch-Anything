@@ -22,7 +22,7 @@ The MVP does not promise direct or complete coverage of Instagram, X, WeChat, or
 
 Starter templates are lightweight. Selecting one only prefills the initial monitoring request; it does not create a separate backend workflow.
 
-One Telegram bot serves every user. The four-day build supports `/start` account binding, `/help`, and outbound alerts only; management stays on the website. The demo limits each account to one active Radar and the deployment to three active Radars overall.
+One Telegram bot serves every user. The four-day build supports `/start` account binding, `/help`, and outbound alerts only; management stays on the website. Each account may run up to three active Radars. Paused Radars do not use an active slot. The portfolio deployment also uses explicit global request caps to protect free provider quotas.
 
 ## 3. User experience
 
@@ -30,29 +30,32 @@ One Telegram bot serves every user. The four-day build supports `/start` account
 
 The hero keeps the approved two-column composition: a clear promise and request input on the left, and a crisp HTML/CSS Telegram phone mockup on the right. The logo is an SVG shared by the header and footer. Functional icons use one outline SVG family; emojis are not used as interface icons.
 
-All landing calls to action converge on the same creation Step 1. `Get started` focuses the hero request input rather than forcing authentication. The header `Log in` button opens the shared Auth page in login mode and returns a successful user to the Radar workspace. After authentication, the header shows an account menu and Dashboard entry. Template cards prefill the hero input. Below the hero, the page shows operational proof, a four-step explanation, templates, and a concise closing call to action.
+All landing calls to action converge on the hero request input. `Get started` focuses that input rather than forcing authentication. After submission, a short inline state below the input says that AI is turning the request into clear rules; this is feedback, not a separate wizard step. The header `Log in` button opens the shared Auth page in login mode and returns a successful user to the Dashboard. After authentication, the header shows an account menu and Dashboard entry. Template cards only prefill the request. Below the hero, the operational-proof section uses the same light neutral palette as the rest of the page, followed by a three-stage explanation, templates, and a concise closing action.
 
 ### 3.2 Creation flow
 
-The landing hero input is the entry to the three-step creation flow, not a separate preliminary step. Its value is saved locally and carried into the creation experience, so the user never re-enters the same request.
+The landing hero input starts creation. Its value is saved locally, and the user never re-enters the same request.
 
-- **Step 1 — AI understands:** Clicking the hero or final CTA carries the existing request into an AI-processing state. It shows the original text, generating progress, failure, and retry. Failure never clears the draft. Guest previews are allowed before authentication and protected by the limits in Section 8.
-- **Step 2 — Review rules:** The original request remains visible. Subject, included topics, exclusions, one generated search query, and importance threshold are editable. The LISA must-ship Radar includes one fixed RSS source from the server-configured allowlist. Source-trust policy, RSS source, and the six-hour interval are fixed MVP defaults and are labelled as such.
-- **Step 3 — Register and connect Telegram:** The requirement page contains two separate cards, not embedded forms. The account card opens a dedicated Auth page where a new user can switch between Sign up and Log in; either successful path restores the draft and returns to Step 3. Only then does the Telegram card unlock. It opens a dedicated connection page showing the Bot identity, the one-time-link flow, the required `Start` action, waiting/failure states, and return confirmation. The final “Create Radar” action remains disabled until both account authentication and Telegram binding are verified server-side.
+1. **Inline AI processing:** The Landing page shows short generating, failure, and retry feedback directly below the request input. Failure never clears the request. When generation succeeds, the user moves directly to the rules page. Guest previews are protected by the limits in Section 8.
+2. **Review rules page:** The original request remains visible. Radar name, subject, included topics, exclusions, one generated search query, and importance threshold are editable. The fixed six-hour schedule and trusted-public-information policy are shown in user language; provider names such as Tavily and RSS are not presented as product concepts.
+3. **Auth page when required:** An unauthenticated user continues to the dedicated Auth page in login mode, with Sign up available as the secondary path. Either successful path restores the confirmed draft.
+4. **Telegram connection page when required:** A signed-in user without a Telegram connection continues to the dedicated connection page. It shows the shared Bot identity, one-time link, required `Start` action, waiting/failure states, and return confirmation.
+5. **Create:** A returning user who is already authenticated and connected creates another Radar immediately after confirming rules. Auth and Telegram are never repeated unnecessarily.
 
-The confirmed rule draft may exist locally or be temporarily associated with the authenticated user, but it is not a Radar and cannot run. Creating the Radar writes `baseline_cutoff_at` and immediately starts the first silent baseline. Telegram is mandatory for this MVP, so there is no `Active · alerts off` state and no “Not now” path.
+The confirmed rule draft may exist locally or be temporarily associated with the authenticated user, but it is not a Radar and cannot run. Creating the Radar writes `baseline_cutoff_at` and immediately starts the first silent baseline. Telegram is mandatory for activating a Radar, so there is no `Active · alerts off` state. At three active Radars, another draft may be saved, but activation requires the user to pause one active Radar; the system never pauses a Radar automatically.
 
 ### 3.3 Dashboard and Radar detail
 
-The post-login product has three deliberately small views rather than stopping at the Landing page:
+The post-login product has three small destinations: Dashboard, My Radars, and account-level Telegram management. There is no separate Activity or All Findings page.
 
-- **Dashboard:** one-Radar overview showing Telegram connection, Radar status, the latest counts, and recent activity.
-- **Radar detail:** current rules, next run, recent findings, and primary controls.
-- **Run history:** each scheduled/manual execution, its status, counts, source failures, and notification result.
+- **Dashboard:** a compact Telegram status banner, up to three active Radar cards plus paused Radar cards, and the three latest important findings across all Radars. It does not use decorative KPI cards or fill the page with zero counts.
+- **My Radars:** the complete Radar list and the `New Radar` entry. Each card shows status, up to three topic tags, last check, next check, new-finding count, and a link to detail.
+- **Radar detail:** current status and next run at the top; Findings and Run history as the two primary content tabs; monitoring rules in a secondary collapsible area; and Pause/Resume, Check now, and Edit rules controls.
+- **Telegram:** one account-level connection serves all of the user's Radars. Each notification begins with the Radar name. Radar detail only states which connected Telegram account receives alerts.
 
-The Dashboard answers whether monitoring is active, whether Telegram is connected, what the latest run found, and what requires attention. A first-time state appears only after the required account and Telegram checks pass; it shows baseline progress, zero notifications, and the next scheduled action. Dashboard navigation opens the Radar detail, and the detail opens Run history; both provide a clear route back.
+The Dashboard answers two questions in one scan: “Are my Radars healthy?” and “What did they find?” A first-time Radar shows baseline progress instead of meaningless zero statistics. Clicking a finding opens its Radar detail. Clicking a Radar card opens its detail. A user can create a second or third Radar without repeating Auth or Telegram connection.
 
-The Radar detail page exposes its current rules, next run, recent findings, and run history. A run records sources checked, candidates found, relevant findings, notifications sent, duration, and per-source failures. “Partial success” lists the specific failed source and reason while preserving successful results from other sources.
+The Radar detail page exposes current rules, next run, recent findings, and run history. A run records sources checked, candidates found, relevant findings, notifications sent, duration, and internal per-provider errors. Product UI does not display Tavily, RSS, HTTP codes, or provider-specific failure text. If at least one source succeeds, successful results are retained and the run may show the quiet message “Results may be incomplete.” If every source fails, the run clearly fails and offers retry. Each finding always shows the original publication domain and source link.
 
 “Check now” has idle, loading, success, failure, and cooldown states. Pause/resume gives immediate visible confirmation.
 
@@ -64,14 +67,14 @@ The connection flow clearly shows unconnected, connecting, connected, and failed
 
 ### 3.5 Authentication pages
 
-Auth is a separate page from Step 3. It contains Sign up and Log in tabs, email/password fields, loading and clear retryable errors, plus a password-recovery entry for returning users. When Auth was entered from Radar creation, success returns to the saved draft rather than the Dashboard. The server revalidates the restored draft before proceeding. The MVP may disable email confirmation for the portfolio demo only if that choice is explicit in Supabase configuration and the README; otherwise the callback flow must include a “check your email” state.
+Auth is a separate page after rules confirmation, not an embedded form or a numbered wizard step. Login is the primary mode and Sign up is available on the same page. It contains email/password fields, loading and clear retryable errors, plus a password-recovery entry for returning users. When Auth was entered from Radar creation, success restores the saved draft and continues to Telegram connection if needed. The server revalidates the restored draft before proceeding. The MVP may disable email confirmation for the portfolio demo only if that choice is explicit in Supabase configuration and the README; otherwise the callback flow must include a “check your email” state.
 
 There is only one Auth implementation. Entry context supplies the initial tab and validated return target:
 
 - Header login: `/auth?mode=login&next=/dashboard`.
-- Radar creation: `/auth?mode=signup&next=%2Fcreate%3Fstep%3D3%26draft%3D<opaque-id>`.
+- Radar creation: `/auth?mode=login&next=%2Fconnect-telegram%3Fdraft%3D<opaque-id>`; the same page offers Sign up.
 
-The server accepts only allowlisted internal return targets. If a creation draft exists, both sign-up and login return to the same Step 3 draft; neither path creates a Radar automatically. Step 3 derives its cards from server state: unauthenticated users complete Auth first; authenticated users with no Telegram binding see the account card completed and Telegram unlocked; users with both requirements verified see both cards completed and may create the Radar.
+The server accepts only allowlisted internal return targets. If a creation draft exists, both sign-up and login restore that draft. An authenticated user without a Telegram binding continues to the connection page. An authenticated and connected user creates the Radar after server-side rule validation, unless the three-active limit requires pausing another Radar first. Authentication alone never creates a Radar automatically.
 
 ### 3.6 Language and responsive behavior
 
@@ -150,7 +153,7 @@ Source adapters fail independently. One broken RSS feed produces partial success
 
 Before sending Telegram, the server inserts the unique notification as `pending`, then updates it to `sent` or `failed`. A retry reuses that record and cannot create a second logical delivery.
 
-The selected RSS source shows available or temporarily unreachable states. Postgres-backed fixed-window limits protect guest AI previews and manual checks; guest keys combine a hashed IP with an anonymous cookie. The default limits are three guest previews per anonymous identity per UTC day, twenty guest previews globally per UTC day, one manual check per Radar per 30 minutes, three manual checks per user per UTC day, and six manual checks globally per UTC day. Daily external-call caps are thirty Tavily queries and thirty model calls across the deployment. Active Radars remain capped at three globally.
+Provider health and provider-specific errors remain internal. The product only shows whether a run succeeded, failed, or may have incomplete results. Postgres-backed fixed-window limits protect guest AI previews and manual checks; guest keys combine a hashed IP with an anonymous cookie. The default limits are three guest previews per anonymous identity per UTC day, twenty guest previews globally per UTC day, one manual check per Radar per 30 minutes, three manual checks per user per UTC day, and six manual checks globally per UTC day. Daily external-call caps are thirty Tavily queries and thirty model calls across the deployment. Both each account and the portfolio deployment are capped at three active Radars.
 
 A Postgres quota row keyed by UTC date and resource is atomically checked and incremented before each external call; a rejected reservation makes no provider request. Counters reset at 00:00 UTC. A failed scheduled run receives at most one retry after 15 minutes; after two total attempts it records failure and returns to its normal six-hour schedule. Exceeding any cap stops external calls and returns a clear quota state. Service-role credentials exist only inside trusted server-only modules: the scheduler, Telegram webhook, and authenticated monitoring commands. Browsers never receive them. Ordinary user CRUD uses session identity and row-level security; privileged routes validate their caller and operate on a narrowly scoped Radar or binding token.
 
@@ -170,13 +173,13 @@ Testing focuses on the core loop and expensive failure points:
 
 ## 10. Four-day scope freeze and implementation priority
 
-The **must-ship freeze line** is one deployed LISA Radar: bilingual English/Chinese core UI, guest preview, email/password sign-up and login with draft restoration, one Tavily query plus one allowlisted RSS feed, deterministic deduplication, baseline, one-Radar Dashboard/detail/run history, Telegram one-time binding, one real notification, basic mobile usability, and the minimum RLS/idempotency/limit tests required to trust that path.
+The **must-ship freeze line** is a deployed multi-Radar loop: bilingual English/Chinese core UI, guest preview, email/password sign-up and login with draft restoration, up to three active Radars per account, a Dashboard combining Radar management with the three latest cross-Radar findings, one Tavily query plus one allowlisted RSS feed per run, deterministic deduplication, baseline, Radar detail/run history, one account-level Telegram binding, one real notification labelled with its Radar name, basic mobile usability, and the minimum RLS/idempotency/limit tests required to trust that path. The deployed smoke test must create and independently run at least a LISA Radar and an OpenAI Radar.
 
 **Stretch only after the deployed loop passes:** localized Telegram notification copy, additional allowlisted RSS choices, templates beyond LISA, richer loading/error polish, extra automated tests, and presentation diagrams. Stretch work must never delay the real deployed smoke test.
 
 1. **Vertical deployment probe:** deploy Next.js/Supabase immediately; verify one hard-coded LISA Tavily/RSS request and one Telegram webhook message on the real `vercel.app` URL. Choose email/password Auth, configure production/local callbacks, and explicitly decide whether email confirmation is disabled for the demo.
-2. **Creation and persistence:** implement guest preview, draft recovery, strict AI rules, one-Radar CRUD, the responsive bilingual core flow, RLS, and database constraints.
-3. **Monitoring:** implement one-Radar claim/lease, Tavily + RSS, deterministic fingerprints, baseline, evaluation, run history, and notification idempotency.
+2. **Creation and persistence:** implement guest preview, draft recovery, strict AI rules, multi-Radar CRUD with a three-active limit, the responsive bilingual core flow, RLS, and database constraints.
+3. **Monitoring:** implement per-Radar claim/lease, Tavily + RSS, deterministic fingerprints, baseline, evaluation, run history, and notification idempotency without leaking provider terminology into product UI.
 4. **Stabilize and present:** complete Telegram one-time binding, deployed smoke test, failure states, quota caps, README, environment template, three-minute demo script, and GitHub upload. Architecture/data-flow/state diagrams are stretch documentation.
 
 If time becomes constrained, retain the real end-to-end LISA path and cut secondary polish. Do not replace the working pipeline with fake results. Before any interview, run the smoke checklist within 24 hours and keep a short recording as evidence if a free external service is temporarily unavailable.
@@ -185,7 +188,7 @@ If time becomes constrained, retain the real end-to-end LISA path and cut second
 
 - The deployment is a personal portfolio/demo, not a commercial production service.
 - Each run has a 45-second application budget; individual external calls target 5–8 seconds.
-- One active Radar per user, three active Radars globally, one Tavily basic query and one fixed allowlisted RSS fetch per run, and explicit daily caps keep the service within free quotas. Automatic paid overage is disabled, and the implementation plan may not exceed the CNY 50 cash budget without new user approval.
+- Up to three active Radars per user and three active Radars across the portfolio deployment, one Tavily basic query and one fixed allowlisted RSS fetch per run, and explicit daily caps keep the service within free quotas. Paused Radars do not consume active slots. Automatic paid overage is disabled, and the implementation plan may not exceed the CNY 50 cash budget without new user approval.
 - Supabase policies default to deny. Clients may not directly write Radar runs, sources, findings, observations, binding tokens, quota counters, or notifications. `radar_sources` insert/update/delete is server-only, and every write resolves a source key against the fixed server allowlist rather than accepting a client URL. The implementation plan must contain a per-table SELECT/INSERT/UPDATE/DELETE policy matrix.
 - The scheduler records an invocation id; duplicate Cron calls are safe. Pause/resume recalculates `next_check_at`. Failed attempts use bounded retry/backoff.
 - Telegram alerts state that importance/confidence indicate rule match, not guaranteed factual truth, and always link to source evidence.
@@ -194,7 +197,7 @@ If time becomes constrained, retain the real end-to-end LISA path and cut second
 ## 12. Prototype references
 
 - Landing and three-step flow visual reference: `.superpowers/brainstorm/62653-1785776069/content/landing-combined-v3.html`
-- The Landing reference also contains the shared Sign up / Log in Auth page and the dedicated Telegram connection page used by Step 3.
+- The Landing reference also contains the shared Log in / Sign up Auth page and the dedicated Telegram connection page used after rule confirmation.
 - Post-login Dashboard visual reference: `.superpowers/brainstorm/72782-1785830353/content/dashboard-create-flow-v1.html`
 - Radar detail/run-history visual reference: `.superpowers/brainstorm/72782-1785830353/content/radar-detail-runs-v1.html`
 - `.superpowers/brainstorm/72782-1785830353/content/watch-anything-canonical-v1.html` is a rejected exploration artifact. It may inform state logic but must not be used as a visual reference.
