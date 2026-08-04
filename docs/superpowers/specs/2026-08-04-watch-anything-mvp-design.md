@@ -17,7 +17,7 @@ The reference demo is a “LISA Official Radar.” It includes new music, tours,
 
 ## 2. Deliberate MVP boundaries
 
-The MVP does not promise direct or complete coverage of Instagram, X, WeChat, or other closed platforms. It uses Tavily web search plus at most three public RSS feeds per Radar. User-specified arbitrary web-page scraping is excluded because safely handling private-network URLs, redirects, anti-bot pages, large responses, and prompt injection is not realistic in four days. Direct social-platform integrations, billing, teams, exports, complex bot conversations, custom domains, Redis, and a separate job queue are also out of scope.
+The MVP does not promise direct or complete coverage of Instagram, X, WeChat, or other closed platforms. It uses Tavily web search plus one RSS feed selected from a small server-configured allowlist. Users cannot submit arbitrary RSS or webpage URLs in the four-day build. Direct social-platform integrations, arbitrary fetching, billing, teams, exports, complex bot conversations, custom domains, Redis, and a separate job queue are out of scope.
 
 Starter templates are lightweight. Selecting one only prefills the initial monitoring request; it does not create a separate backend workflow.
 
@@ -36,7 +36,7 @@ All landing calls to action converge on the same creation Step 1. Template cards
 The creation flow contains three steps:
 
 - **Describe:** A guest enters a natural-language request. The page shows generating, failure, and retry states. Failure never clears the user's text. One guest preview is allowed before authentication and protected by rate limiting.
-- **Review rules:** The original request remains visible. Subject, included topics, exclusions, one generated search query, optional RSS feeds, and importance threshold are editable. Source-trust policy and the six-hour interval are fixed MVP defaults and are labelled as such.
+- **Review rules:** The original request remains visible. Subject, included topics, exclusions, one generated search query, and importance threshold are editable. One optional RSS source may be selected from a server-configured allowlist. Source-trust policy and the six-hour interval are fixed MVP defaults and are labelled as such.
 - **Activate:** Authentication is required only after the user has seen the preview. The draft is preserved locally during sign-up and restored after redirect. A Radar may be active without Telegram: it monitors and stores findings but cannot deliver alerts. The UI therefore distinguishes `Active · alerts off` from `Active · Telegram connected`. The first manual action is “Build baseline now,” not “Check now.”
 
 ### 3.3 Dashboard and Radar detail
@@ -67,7 +67,7 @@ Use a TypeScript modular monolith:
 - Tailwind CSS and a small component layer for the approved UI.
 - Supabase Auth and PostgreSQL for authentication and persistence.
 - Supabase Cron for the global scheduler.
-- Tavily basic search plus public RSS feeds. Arbitrary web-page fetching is excluded.
+- Tavily basic search plus one RSS source from a server-configured allowlist. User-supplied URL fetching is excluded.
 - Groq `openai/gpt-oss-20b` as the primary structured-output model.
 - A small provider interface permits a deployment-time switch to OpenRouter, but there is no automatic runtime fallback.
 - Telegram Bot API webhook for one-time binding and notifications.
@@ -83,7 +83,7 @@ Core tables:
 
 - `profiles`: user profile and locale.
 - `radars`: owner, name, original prompt, status, interval, baseline cutoff, last/next check, lease expiry, attempt count, timestamps, and validated `rules JSONB`.
-- `radar_sources`: RSS URL, normalized URL, validation/baseline state, and last error. `(radar_id, normalized_url)` is unique.
+- `radar_sources`: allowlisted RSS source key, canonical URL, validation/baseline state, and last error. `(radar_id, source_key)` is unique. The server resolves keys to URLs; clients never choose a fetch target.
 - `radar_runs`: Radar, trigger, start/end, status, stable error code, counts, `rules_snapshot JSONB`, and scheduler invocation id.
 - `findings`: Radar, source/canonical URL, deterministic fingerprint, title, excerpt, published time, first/last seen, and source evidence. `(radar_id, fingerprint)` is unique.
 - `run_findings`: links a finding to each run and stores that run's relevance, confidence, importance, decision, and explanation.
@@ -100,7 +100,7 @@ One Supabase Cron job runs every 15 minutes and calls a secured Next.js endpoint
 For every claimed Radar:
 
 1. Load and validate its rules and sources.
-2. Run one Tavily basic query and fetch validated RSS feeds independently, with short per-source and total-run timeouts.
+2. Run one Tavily basic query and fetch the selected allowlisted RSS feed independently, with short per-source and total-run timeouts.
 3. Normalize candidates into one finding format.
 4. Deduplicate deterministically using normalized canonical URL, or a hash of normalized title plus source domain when no URL exists. Semantic/embedding deduplication is excluded.
 5. Apply deterministic checks for recency, exclusions, source trust, and prior notification.
@@ -128,7 +128,7 @@ Source adapters fail independently. One broken RSS feed produces partial success
 
 Before sending Telegram, the server inserts the unique notification as `pending`, then updates it to `sent` or `failed`. A retry reuses that record and cannot create a second logical delivery.
 
-RSS inputs are validated before activation and show valid, unsupported, or unreachable states. Postgres-backed fixed-window limits protect guest AI previews and manual checks; guest keys combine a hashed IP with an anonymous cookie. Limits are enforced server-side. Daily hard caps cover Tavily searches, model calls, active Radars, and manual checks; exceeding a cap stops external calls and returns a clear quota state. Service-role credentials exist only in the scheduler module, while user CRUD uses session identity and row-level security.
+The selected RSS source shows available or temporarily unreachable states. Postgres-backed fixed-window limits protect guest AI previews and manual checks; guest keys combine a hashed IP with an anonymous cookie. Limits are enforced server-side. Daily hard caps cover Tavily searches, model calls, active Radars, and manual checks; exceeding a cap stops external calls and returns a clear quota state. Service-role credentials exist only inside trusted server-only modules: the scheduler, Telegram webhook, and authenticated monitoring commands. Browsers never receive them. Ordinary user CRUD uses session identity and row-level security; privileged routes validate their caller and operate on a narrowly scoped Radar or binding token.
 
 Every notification links back to its source and to the finding detail. Importance and confidence are explained in plain language; they are decision aids, not claims that AI is infallible.
 
@@ -144,7 +144,11 @@ Testing focuses on the core loop and expensive failure points:
 - Manual deployed smoke test covers registration, draft restoration, one real Tavily query, one RSS feed, baseline, one new finding, and one real Telegram message.
 - Responsive checks at desktop and 390 px, plus English/Chinese copy checks on the core flow.
 
-## 10. Four-day implementation priority
+## 10. Four-day scope freeze and implementation priority
+
+The **must-ship freeze line** is one deployed LISA Radar: English core flow, guest preview, email/password sign-up with draft restoration, one Tavily query plus one allowlisted RSS feed, deterministic deduplication, baseline, one-Radar workspace/run history, Telegram one-time binding, one real notification, basic mobile usability, and the minimum RLS/idempotency/limit tests required to trust that path.
+
+**Stretch only after the deployed loop passes:** Chinese core copy, additional allowlisted RSS choices, templates beyond LISA, richer loading/error polish, extra automated tests, and presentation diagrams. Stretch work must never delay the real deployed smoke test.
 
 1. **Vertical deployment probe:** deploy Next.js/Supabase immediately; verify one hard-coded LISA Tavily/RSS request and one Telegram webhook message on the real `vercel.app` URL. Choose email/password Auth, configure production/local callbacks, and explicitly decide whether email confirmation is disabled for the demo.
 2. **Creation and persistence:** implement guest preview, draft recovery, strict AI rules, one-Radar CRUD, responsive bilingual core flow, RLS, and database constraints.
@@ -157,7 +161,7 @@ If time becomes constrained, retain the real end-to-end LISA path and cut second
 
 - The deployment is a personal portfolio/demo, not a commercial production service.
 - Each run has a 45-second application budget; individual external calls target 5–8 seconds.
-- One active Radar per user, three active Radars globally, one Tavily basic query per run, and explicit daily caps keep the service within free quotas. Automatic paid overage is disabled.
+- One active Radar per user, three active Radars globally, one Tavily basic query and at most one allowlisted RSS fetch per run, and explicit daily caps keep the service within free quotas. Automatic paid overage is disabled.
 - Supabase policies default to deny. Clients may not directly write runs, findings, observations, binding tokens, or notifications. The implementation plan must contain a per-table SELECT/INSERT/UPDATE/DELETE policy matrix.
 - The scheduler records an invocation id; duplicate Cron calls are safe. Pause/resume recalculates `next_check_at`. Failed attempts use bounded retry/backoff.
 - Telegram alerts state that importance/confidence indicate rule match, not guaranteed factual truth, and always link to source evidence.
