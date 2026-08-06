@@ -24,8 +24,8 @@ vi.mock("@/lib/env", () => ({
     CRON_SECRET: "cron-secret",
     RULE_TOKEN_SECRET: "rule-token-secret-that-is-at-least-32-chars",
     TAVILY_API_KEY: "tavily-key",
-    GROQ_API_KEY: "groq-key",
-    GROQ_MODEL: "openai/gpt-oss-20b",
+    GEMINI_API_KEY: "gemini-key",
+    GEMINI_MODEL: "gemini-3.1-flash-lite",
   })),
 }));
 
