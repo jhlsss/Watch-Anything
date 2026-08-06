@@ -375,6 +375,7 @@ describe("parseRules", () => {
     ];
 
     expect(request.model).toBe("openai/gpt-oss-20b");
+    expect(request.max_completion_tokens).toBe(2048);
     expect(request.response_format).toEqual({
       type: "json_schema",
       json_schema: {
@@ -446,6 +447,60 @@ describe("parseRules", () => {
       ).resolves.toMatchObject({ importanceThreshold: 70 });
     },
   );
+
+  it("normalizes qualitative importance thresholds from the model", async () => {
+    stubServerEnv();
+    const groq = createGroqStub([
+      JSON.stringify({
+        radar_name: "OpenAI Release Monitor",
+        subject: "OpenAI product releases and model updates",
+        aliases: ["OpenAI"],
+        include_topics: ["product release", "model update"],
+        exclude_topics: [],
+        search_query: "OpenAI product release model update",
+        importance_threshold: "high",
+      }),
+    ]);
+
+    await expect(
+      parseRules({
+        prompt: "Track official OpenAI product releases and major model updates.",
+        groq,
+      }),
+    ).resolves.toMatchObject({ importanceThreshold: 75 });
+  });
+
+  it("retries rule output that cannot pass the confirmation constraints", async () => {
+    stubServerEnv();
+    const groq = createGroqStub([
+      JSON.stringify({
+        radar_name: "OpenAI Release Monitor",
+        subject: "OpenAI product releases and model updates",
+        aliases: ["OpenAI"],
+        include_topics: [],
+        exclude_topics: [],
+        search_query: "OpenAI product release model update",
+        importance_threshold: 75,
+      }),
+      JSON.stringify({
+        radar_name: "OpenAI Release Monitor",
+        subject: "OpenAI product releases and model updates",
+        aliases: ["OpenAI"],
+        include_topics: ["product release"],
+        exclude_topics: [],
+        search_query: "OpenAI product release model update",
+        importance_threshold: 75,
+      }),
+    ]);
+
+    await expect(
+      parseRules({
+        prompt: "Track official OpenAI product releases and major model updates.",
+        groq,
+      }),
+    ).resolves.toMatchObject({ includeTopics: ["product release"] });
+    expect(groq.create).toHaveBeenCalledTimes(2);
+  });
 
   it("always uses GROQ_MODEL instead of a caller-supplied model", async () => {
     stubServerEnv("configured-groq-model");

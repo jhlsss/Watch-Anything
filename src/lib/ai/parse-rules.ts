@@ -24,6 +24,7 @@ export async function parseRules({
     schemaName: "parse_rules",
     jsonSchema: parseRulesJsonSchema,
     validator: parseRulesStructuredSchema,
+    maxCompletionTokens: 2048,
     messages: [
       {
         role: "system",

@@ -35,9 +35,18 @@ export class AiAdapterError extends Error {
 
 const importanceThresholdSchema = z.preprocess(
   (value) => {
+    const qualitativeThresholds: Record<string, number> = {
+      "very high": 90,
+      high: 75,
+      important: 75,
+      medium: 50,
+      normal: 50,
+      low: 25,
+      "very low": 10,
+    };
     const numericValue =
       typeof value === "string" && value.trim() !== ""
-        ? Number(value)
+        ? qualitativeThresholds[value.trim().toLowerCase()] ?? Number(value)
         : value;
 
     if (
@@ -55,12 +64,15 @@ const importanceThresholdSchema = z.preprocess(
 );
 
 export const parseRulesStructuredSchema = z.object({
-  radar_name: z.string().min(1),
-  subject: z.string().min(1),
-  aliases: z.array(z.string()),
-  include_topics: z.array(z.string()),
-  exclude_topics: z.array(z.string()),
-  search_query: z.string().min(1),
+  radar_name: z.string().trim().min(2).max(80),
+  subject: z.string().trim().min(1).max(100),
+  aliases: z.array(z.string().trim().min(1).max(60)).max(8),
+  include_topics: z
+    .array(z.string().trim().min(1).max(60))
+    .min(1)
+    .max(8),
+  exclude_topics: z.array(z.string().trim().min(1).max(60)).max(8),
+  search_query: z.string().trim().min(1).max(240),
   importance_threshold: importanceThresholdSchema,
 });
 
@@ -92,21 +104,25 @@ export const parseRulesJsonSchema = {
     "importance_threshold",
   ],
   properties: {
-    radar_name: { type: "string" },
-    subject: { type: "string" },
+    radar_name: { type: "string", minLength: 2, maxLength: 80 },
+    subject: { type: "string", minLength: 1, maxLength: 100 },
     aliases: {
       type: "array",
-      items: { type: "string" },
+      maxItems: 8,
+      items: { type: "string", minLength: 1, maxLength: 60 },
     },
     include_topics: {
       type: "array",
-      items: { type: "string" },
+      minItems: 1,
+      maxItems: 8,
+      items: { type: "string", minLength: 1, maxLength: 60 },
     },
     exclude_topics: {
       type: "array",
-      items: { type: "string" },
+      maxItems: 8,
+      items: { type: "string", minLength: 1, maxLength: 60 },
     },
-    search_query: { type: "string" },
+    search_query: { type: "string", minLength: 1, maxLength: 240 },
     importance_threshold: { type: ["number", "string"] },
   },
 } as const;
@@ -220,6 +236,7 @@ async function runStructuredCompletion<T>({
   jsonSchema,
   messages,
   validator,
+  maxCompletionTokens,
 }: {
   groq: GroqLike;
   model: string;
@@ -227,8 +244,9 @@ async function runStructuredCompletion<T>({
   jsonSchema: Record<string, unknown>;
   messages: GroqMessage[];
   validator: z.ZodType<T>;
+  maxCompletionTokens?: number;
 }): Promise<T> {
-  const response = await groq.chat.completions.create({
+  const request: Record<string, unknown> = {
     model,
     messages,
     response_format: {
@@ -239,7 +257,13 @@ async function runStructuredCompletion<T>({
         schema: jsonSchema,
       },
     },
-  });
+  };
+
+  if (maxCompletionTokens !== undefined) {
+    request.max_completion_tokens = maxCompletionTokens;
+  }
+
+  const response = await groq.chat.completions.create(request);
 
   return parseStructuredContent(readMessageContent(response), validator);
 }
@@ -251,6 +275,7 @@ export async function createStructuredOutput<T>({
   jsonSchema,
   messages,
   validator,
+  maxCompletionTokens,
 }: {
   groq: GroqLike;
   model: string;
@@ -258,6 +283,7 @@ export async function createStructuredOutput<T>({
   jsonSchema: Record<string, unknown>;
   messages: GroqMessage[];
   validator: z.ZodType<T>;
+  maxCompletionTokens?: number;
 }): Promise<T> {
   try {
     return await runStructuredCompletion({
@@ -267,6 +293,7 @@ export async function createStructuredOutput<T>({
       jsonSchema,
       messages,
       validator,
+      maxCompletionTokens,
     });
   } catch (error) {
     if (!(error instanceof AiAdapterError) || error.code !== "GROQ_INVALID_RESPONSE") {
@@ -292,6 +319,7 @@ export async function createStructuredOutput<T>({
           },
         ],
         validator,
+        maxCompletionTokens,
       });
     } catch (retryError) {
       if (retryError instanceof AiAdapterError) {
