@@ -235,7 +235,11 @@ set search_path = public, pg_temp
 as $$
 declare
   radar_row public.radars%rowtype;
+  stale_run record;
   claimed_run_id uuid;
+  claimed_radar_id uuid;
+  recovered_run_id uuid;
+  recovered_status text;
   manual_count integer;
 begin
   if p_trigger not in ('baseline', 'manual', 'schedule') then
@@ -257,6 +261,71 @@ begin
 
   if not found then
     return query select null::uuid, null::uuid, 'RADAR_NOT_FOUND';
+    return;
+  end if;
+
+  for stale_run in
+    select rr.id,
+           rr.lease_owner,
+           rr.source_success_count,
+           rr.source_outcomes
+      from public.radar_runs rr
+     where rr.radar_id = p_radar_id
+       and rr.status = 'running'
+       and rr.lease_expires_at is not null
+       and rr.lease_expires_at <= now()
+     order by rr.started_at, rr.id
+     for update
+  loop
+    recovered_status := case
+      when coalesce(stale_run.source_success_count, 0) >= 1
+        or exists (
+          select 1
+            from jsonb_array_elements(
+              coalesce(stale_run.source_outcomes, '[]'::jsonb)
+            ) outcome
+           where outcome ->> 'success' = 'true'
+        )
+        then 'success'
+      else 'failed'
+    end;
+    recovered_run_id := null;
+
+    update public.radar_runs
+       set status = recovered_status,
+           finished_at = timezone('utc', now()),
+           lease_owner = null,
+           lease_expires_at = null
+     where id = stale_run.id
+       and status = 'running'
+       and lease_owner is not distinct from stale_run.lease_owner
+       and lease_expires_at <= now()
+     returning id into recovered_run_id;
+
+    if recovered_run_id is not null then
+      update public.radars
+         set lease_owner = null,
+             lease_expires_at = null,
+             last_checked_at = timezone('utc', now()),
+             next_check_at = case
+               when recovered_status = 'failed' then now() + interval '15 minutes'
+               else now() + interval '6 hours'
+             end,
+             updated_at = timezone('utc', now())
+       where id = p_radar_id
+         and lease_expires_at is not null
+         and lease_expires_at <= now();
+    end if;
+  end loop;
+
+  if exists (
+    select 1
+      from public.radar_runs rr
+     where rr.radar_id = p_radar_id
+       and rr.status = 'running'
+       and (rr.lease_expires_at is null or rr.lease_expires_at > now())
+  ) then
+    return query select null::uuid, null::uuid, 'RADAR_ALREADY_LEASED';
     return;
   end if;
 
@@ -311,7 +380,14 @@ begin
      set lease_owner = p_lease_owner,
          lease_expires_at = p_lease_expires_at,
          updated_at = timezone('utc', now())
-   where id = p_radar_id;
+   where id = p_radar_id
+     and (lease_expires_at is null or lease_expires_at <= now())
+  returning id into claimed_radar_id;
+
+  if claimed_radar_id is null then
+    return query select null::uuid, null::uuid, 'RADAR_ALREADY_LEASED';
+    return;
+  end if;
 
   insert into public.radar_runs (
     radar_id,
@@ -343,16 +419,29 @@ returns table (
   user_id uuid,
   destination_id text
 )
-language sql
+language plpgsql
 security definer
 set search_path = public, pg_temp
 as $$
+begin
+  update public.notifications n
+     set status = 'unknown',
+         error_code = 'NOTIFICATION_CLAIM_EXPIRED'
+   where n.id = p_notification_id
+     and n.status = 'sending'
+     and (
+       n.claimed_at is null
+       or n.claimed_at <= timezone('utc', now()) - interval '5 minutes'
+     );
+
+  return query
   update public.notifications n
      set status = 'sending',
          claimed_at = timezone('utc', now())
    where n.id = p_notification_id
      and n.status = 'pending'
   returning n.id, n.finding_id, n.radar_id, n.user_id, n.destination_id;
+end;
 $$;
 
 revoke all on function public.create_radar_from_setup(uuid, uuid) from public, anon, authenticated;
@@ -364,3 +453,67 @@ grant execute on function public.create_radar_from_setup(uuid, uuid) to service_
 grant execute on function public.set_radar_status(uuid, uuid, text) to service_role;
 grant execute on function public.claim_radar_run(uuid, uuid, text, uuid, timestamptz) to service_role;
 grant execute on function public.claim_notification(uuid) to service_role;
+
+alter table public.pending_radar_setups
+  add column if not exists rule_token_hash text;
+
+create unique index if not exists pending_radar_setups_pending_user_rule_token_hash_idx
+  on public.pending_radar_setups (user_id, rule_token_hash)
+  where status = 'pending' and rule_token_hash is not null;
+
+create or replace function public.claim_guest_ai_request(
+  p_identity_hash text
+)
+returns table (
+  allowed boolean,
+  identity_count integer,
+  global_count integer
+)
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  utc_day_start timestamptz;
+begin
+  if p_identity_hash is null or btrim(p_identity_hash) = '' then
+    return query select false, 0, 0;
+    return;
+  end if;
+
+  utc_day_start := date_trunc('day', timezone('utc', now())) at time zone 'utc';
+
+  -- Serialize the global quota before the identity quota to avoid deadlocks
+  -- between two callers claiming different identities at the same time.
+  perform pg_advisory_xact_lock(
+    hashtextextended('watch-anything:guest-ai:global', 0)
+  );
+  perform pg_advisory_xact_lock(
+    hashtextextended('watch-anything:guest-ai:identity:' || p_identity_hash, 0)
+  );
+
+  select count(*)::integer
+    into identity_count
+    from public.guest_ai_requests r
+   where r.identity_hash = p_identity_hash
+     and r.created_at >= utc_day_start;
+
+  select count(*)::integer
+    into global_count
+    from public.guest_ai_requests r
+   where r.created_at >= utc_day_start;
+
+  if identity_count >= 3 or global_count >= 20 then
+    return query select false, identity_count, global_count;
+    return;
+  end if;
+
+  insert into public.guest_ai_requests (identity_hash)
+  values (p_identity_hash);
+
+  return query select true, identity_count + 1, global_count + 1;
+end;
+$$;
+
+revoke all on function public.claim_guest_ai_request(text) from public, anon, authenticated;
+grant execute on function public.claim_guest_ai_request(text) to service_role;

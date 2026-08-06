@@ -88,6 +88,7 @@ describe("fingerprintCandidate", () => {
 function queryFor(
   result: { data: unknown; error: null | { code?: string; message: string } },
   onFilter?: (filters: Record<string, unknown>) => typeof result,
+  onOperation?: (operation: string, payload: unknown) => void,
 ) {
   const filters: Record<string, unknown> = {};
   const query = {
@@ -105,7 +106,10 @@ function queryFor(
     order: () => query,
     limit: () => query,
     insert: () => query,
-    update: () => query,
+    update: (values: unknown) => {
+      onOperation?.("update", values);
+      return query;
+    },
     upsert: () => query,
     maybeSingle: () => Promise.resolve(onFilter ? onFilter(filters) : result),
     single: () => Promise.resolve(onFilter ? onFilter(filters) : result),
@@ -183,6 +187,181 @@ describe("notification claiming", () => {
     ).resolves.toBeNull();
     expect(telegram.sendMessage).not.toHaveBeenCalled();
   });
+
+  it("finishes a claimed notification as unknown when finding preparation fails", async () => {
+    const updates: Record<string, unknown>[] = [];
+    const client = {
+      from(table: string) {
+        if (table === "findings") {
+          return queryFor({
+            data: null,
+            error: { code: "PGRST500", message: "read failed" },
+          });
+        }
+        if (table === "notifications") {
+          return queryFor(
+            { data: { id: "notification-1" }, error: null },
+            undefined,
+            (_operation, values) => updates.push(values as Record<string, unknown>),
+          );
+        }
+        return queryFor({ data: null, error: null });
+      },
+      rpc: vi.fn().mockResolvedValue({
+        data: [
+          {
+            notification_id: "notification-1",
+            finding_id: "finding-1",
+            radar_id: "radar-1",
+            user_id: "user-1",
+            destination_id: "chat-1",
+          },
+        ],
+        error: null,
+      }),
+    } as unknown as MonitoringClient;
+
+    const result = await sendPendingNotification("notification-1", {
+      client,
+      telegram: { sendMessage: vi.fn() },
+    });
+
+    expect(result).toMatchObject({ status: "unknown" });
+    expect(updates).toEqual([
+      { status: "unknown", error_code: "NOTIFICATION_PREPARATION_FAILED" },
+    ]);
+  });
+
+  it("finishes a claimed notification as failed when the destination is gone", async () => {
+    const updatedStatuses: unknown[] = [];
+    const client = {
+      from(table: string) {
+        if (table === "findings") {
+          return queryFor({
+            data: {
+              id: "finding-1",
+              radar_id: "radar-1",
+              fingerprint: "fp-1",
+              event_key: null,
+              title: "Finding",
+              summary: "Summary",
+              source_domain: "example.com",
+              source_url: "https://example.com/finding",
+            },
+            error: null,
+          });
+        }
+        if (table === "radars") {
+          return queryFor({
+            data: { id: "radar-1", user_id: "user-1", name: "Radar" },
+            error: null,
+          });
+        }
+        if (table === "telegram_connections") {
+          return queryFor({ data: null, error: null });
+        }
+        if (table === "notifications") {
+          return queryFor(
+            { data: { id: "notification-1" }, error: null },
+            undefined,
+            (_operation, values) => updatedStatuses.push((values as { status?: unknown }).status),
+          );
+        }
+        return queryFor({ data: null, error: null });
+      },
+      rpc: vi.fn().mockResolvedValue({
+        data: [
+          {
+            notification_id: "notification-1",
+            finding_id: "finding-1",
+            radar_id: "radar-1",
+            user_id: "user-1",
+            destination_id: "chat-1",
+          },
+        ],
+        error: null,
+      }),
+    } as unknown as MonitoringClient;
+
+    const result = await sendPendingNotification("notification-1", {
+      client,
+      telegram: { sendMessage: vi.fn() },
+    });
+
+    expect(result).toMatchObject({ status: "failed", errorCode: "TELEGRAM_NOT_CONNECTED" });
+    expect(updatedStatuses).toEqual(["failed"]);
+  });
+
+  it.each(["radars", "telegram_connections"] as const)(
+    "finishes as unknown when %s preparation reads fail",
+    async (failedTable) => {
+      const updates: Record<string, unknown>[] = [];
+      const client = {
+        from(table: string) {
+          if (table === "findings") {
+            return queryFor({
+              data: {
+                id: "finding-1",
+                radar_id: "radar-1",
+                fingerprint: "fp-1",
+                event_key: null,
+                title: "Finding",
+                summary: "Summary",
+                source_domain: "example.com",
+                source_url: "https://example.com/finding",
+              },
+              error: null,
+            });
+          }
+          if (table === failedTable) {
+            return queryFor({
+              data: null,
+              error: { code: "PGRST500", message: "read failed" },
+            });
+          }
+          if (table === "radars") {
+            return queryFor({
+              data: { id: "radar-1", user_id: "user-1", name: "Radar" },
+              error: null,
+            });
+          }
+          if (table === "notifications") {
+            return queryFor(
+              { data: { id: "notification-1" }, error: null },
+              undefined,
+              (_operation, values) => updates.push(values as Record<string, unknown>),
+            );
+          }
+          return queryFor({ data: { chat_id: "chat-1" }, error: null });
+        },
+        rpc: vi.fn().mockResolvedValue({
+          data: [
+            {
+              notification_id: "notification-1",
+              finding_id: "finding-1",
+              radar_id: "radar-1",
+              user_id: "user-1",
+              destination_id: "chat-1",
+            },
+          ],
+          error: null,
+        }),
+      } as unknown as MonitoringClient;
+
+      await expect(
+        sendPendingNotification("notification-1", {
+          client,
+          telegram: { sendMessage: vi.fn() },
+        }),
+      ).resolves.toMatchObject({
+        status: "unknown",
+        errorCode: "NOTIFICATION_PREPARATION_FAILED",
+      });
+      expect(updates).toEqual([
+        { status: "unknown", error_code: "NOTIFICATION_PREPARATION_FAILED" },
+      ]);
+    },
+  );
 });
 
 const testRules: RadarRules = {
@@ -224,7 +403,14 @@ const testCandidate: Candidate = {
 
 class MonitoringFakeClient implements MonitoringClient {
   readonly rpcCalls: string[] = [];
+  readonly findingInserts: Record<string, unknown>[] = [];
+  readonly terminalRunUpdates: Record<string, unknown>[] = [];
   runStatus: "running" | "success" = "running";
+  sourceUpdateRows = true;
+  terminalRunUpdateRows = true;
+  radarUpdateRows = true;
+  terminalUpdateFailures = 0;
+  sourcePersistenceFailures = 0;
   private findingCounter = 0;
 
   from(table: string): MonitoringQuery {
@@ -232,7 +418,35 @@ class MonitoringFakeClient implements MonitoringClient {
     let operation: "select" | "insert" | "update" | "upsert" = "select";
     let payload: Record<string, unknown> = {};
     const resolve = (): { data: unknown; error: null | { message: string; code?: string } } => {
-      if (operation === "update" || operation === "upsert") {
+      if (operation === "update") {
+        if (table === "radar_runs" && "status" in payload) {
+          this.terminalRunUpdates.push(payload);
+          if (this.terminalUpdateFailures > 0) {
+            this.terminalUpdateFailures -= 1;
+            return { data: null, error: { code: "PGRST500", message: "temporary write failure" } };
+          }
+          if (!this.terminalRunUpdateRows) {
+            return { data: null, error: null };
+          }
+          this.runStatus = payload.status === "success" ? "success" : "running";
+          return { data: { id: "run-1" }, error: null };
+        }
+        if (table === "radar_runs" && "source_outcomes" in payload) {
+          if (this.sourcePersistenceFailures > 0) {
+            this.sourcePersistenceFailures -= 1;
+            return { data: null, error: { code: "PGRST500", message: "source write failed" } };
+          }
+          if (!this.sourceUpdateRows) {
+            return { data: null, error: null };
+          }
+          return { data: { id: "run-1" }, error: null };
+        }
+        if (table === "radars" && !this.radarUpdateRows) {
+          return { data: null, error: null };
+        }
+        return { data: { id: table === "radars" ? "radar-1" : "run-1" }, error: null };
+      }
+      if (operation === "upsert") {
         return { data: null, error: null };
       }
       if (table === "radars") {
@@ -259,12 +473,14 @@ class MonitoringFakeClient implements MonitoringClient {
       }
       if (table === "findings" && operation === "insert") {
         this.findingCounter += 1;
+        this.findingInserts.push(payload);
         return {
           data: {
             id: `finding-${this.findingCounter}`,
             radar_id: "radar-1",
             fingerprint: String(payload.fingerprint),
             event_key: payload.event_key ?? null,
+            importance_score: Number(payload.importance_score ?? 0),
             first_seen_during_baseline: Boolean(payload.first_seen_during_baseline),
             notification_eligible: Boolean(payload.notification_eligible),
           },
@@ -389,5 +605,155 @@ describe("run pipeline", () => {
     });
 
     expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it("keeps different fingerprints as separate findings even when event_key matches", async () => {
+    const client = new MonitoringFakeClient();
+    const secondCandidate = {
+      ...testCandidate,
+      sourceUrl: "https://example.com/task-5-follow-up",
+      title: "Task 5 follow-up",
+    };
+
+    await runRadar("radar-1", "baseline", {
+      client,
+      searchTavily: async () => [testCandidate, secondCandidate],
+      fetchRss: async () => [],
+      evaluate: async () =>
+        [testCandidate, secondCandidate].map((candidate) => ({
+          candidate,
+          evaluation: {
+            relevant: true,
+            relevance_score: 90,
+            importance_score: 90,
+            confidence: 0.9,
+            event_key: "same-event",
+            duplicate_of_event_key: null,
+            reason: "matches",
+          },
+        })),
+    });
+
+    expect(client.findingInserts).toHaveLength(2);
+    expect(client.findingInserts.map((finding) => finding.source_url)).toEqual([
+      testCandidate.sourceUrl,
+      secondCandidate.sourceUrl,
+    ]);
+  });
+
+  it("fails with RUN_NOT_CLAIMED when finalization updates zero rows", async () => {
+    const client = new MonitoringFakeClient();
+    client.terminalRunUpdateRows = false;
+
+    await expect(
+      runRadar("radar-1", "baseline", {
+        client,
+        searchTavily: async () => [],
+        fetchRss: async () => [],
+      }),
+    ).rejects.toMatchObject({ code: "RUN_NOT_CLAIMED" });
+  });
+
+  it("fails with RUN_NOT_CLAIMED when source persistence updates zero rows", async () => {
+    const client = new MonitoringFakeClient();
+    client.sourceUpdateRows = false;
+
+    await expect(
+      runRadar("radar-1", "baseline", {
+        client,
+        searchTavily: async () => [],
+        fetchRss: async () => [],
+      }),
+    ).rejects.toMatchObject({ code: "RUN_NOT_CLAIMED" });
+    expect(client.terminalRunUpdates.at(-1)).toMatchObject({ status: "failed" });
+  });
+
+  it("fails with RUN_NOT_CLAIMED when baseline updates zero rows", async () => {
+    const client = new MonitoringFakeClient();
+    client.radarUpdateRows = false;
+
+    await expect(
+      runRadar("radar-1", "baseline", {
+        client,
+        searchTavily: async () => [],
+        fetchRss: async () => [],
+      }),
+    ).rejects.toMatchObject({ code: "RUN_NOT_CLAIMED" });
+  });
+
+  it("retries terminal writes twice and releases a run after source persistence fails", async () => {
+    const retryClient = new MonitoringFakeClient();
+    retryClient.terminalUpdateFailures = 2;
+
+    const retryResult = await runRadar("radar-1", "baseline", {
+      client: retryClient,
+      searchTavily: async () => [],
+      fetchRss: async () => [],
+    });
+
+    expect(retryResult.status).toBe("success");
+    expect(retryClient.terminalRunUpdates).toHaveLength(3);
+
+    const recoveryClient = new MonitoringFakeClient();
+    recoveryClient.sourcePersistenceFailures = 1;
+
+    await expect(
+      runRadar("radar-1", "baseline", {
+        client: recoveryClient,
+        searchTavily: async () => [],
+        fetchRss: async () => [],
+      }),
+    ).rejects.toMatchObject({ code: "DATABASE_ERROR" });
+    expect(recoveryClient.terminalRunUpdates.at(-1)).toMatchObject({
+      status: "failed",
+      lease_owner: null,
+      lease_expires_at: null,
+    });
+  });
+
+  it("does not write findings after the run loses its lease", async () => {
+    const client = new MonitoringFakeClient();
+
+    await expect(
+      runRadar("radar-1", "baseline", {
+        client,
+        searchTavily: async () => [testCandidate],
+        fetchRss: async () => [],
+        evaluate: async () => {
+          client.runStatus = "success";
+          return [
+            {
+              candidate: testCandidate,
+              evaluation: {
+                relevant: true,
+                relevance_score: 90,
+                importance_score: 90,
+                confidence: 0.9,
+                event_key: "lease-lost-event",
+                duplicate_of_event_key: null,
+                reason: "matches",
+              },
+            },
+          ];
+        },
+      }),
+    ).rejects.toMatchObject({ code: "RUN_NOT_CLAIMED" });
+
+    expect(client.findingInserts).toHaveLength(0);
+  });
+
+  it("treats an AI evaluation timeout as a recoverable AI failure", async () => {
+    const client = new MonitoringFakeClient();
+
+    const result = await runRadar("radar-1", "baseline", {
+      client,
+      searchTavily: async () => [testCandidate],
+      fetchRss: async () => [],
+      evaluate: () => new Promise<never>(() => undefined),
+      aiTimeoutMs: 5,
+    });
+
+    expect(result.status).toBe("success");
+    expect(client.findingInserts).toHaveLength(1);
   });
 });

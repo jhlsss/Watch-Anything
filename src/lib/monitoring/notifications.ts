@@ -184,9 +184,36 @@ async function updateNotification(
     .from("notifications")
     .update(values)
     .eq("id", notificationId)
-    .eq("status", "sending");
+    .eq("status", "sending")
+    .select("id")
+    .maybeSingle();
 
-  return !result.error;
+  return !result.error && Boolean(result.data);
+}
+
+async function finishPreparationFailure(
+  client: MonitoringClient,
+  notificationId: string,
+  status: "failed" | "unknown",
+  errorCode: string,
+): Promise<NotificationSendResult> {
+  const updated = await updateNotification(client, notificationId, {
+    status,
+    error_code: errorCode,
+  });
+
+  if (!updated) {
+    throw new MonitoringError(
+      "DATABASE_ERROR",
+      "Notification status could not be updated after preparation failure.",
+    );
+  }
+
+  return {
+    notificationId,
+    status,
+    errorCode,
+  };
 }
 
 export async function sendPendingNotification(
@@ -205,38 +232,60 @@ export async function sendPendingNotification(
     return null;
   }
 
-  const finding = await readFinding(db, claim.finding_id);
-  const radar = await readRadar(db, claim.radar_id);
-  const connectionResult = await db
-    .from("telegram_connections")
-    .select("chat_id")
-    .eq("user_id", claim.user_id)
-    .eq("chat_id", claim.destination_id)
-    .maybeSingle();
-
-  if (connectionResult.error || !connectionResult.data) {
-    const updated = await updateNotification(db, notificationId, {
-      status: "failed",
-      error_code: "TELEGRAM_NOT_CONNECTED",
-    });
-
-    if (!updated) {
-      throw new MonitoringError(
-        "DATABASE_ERROR",
-        connectionResult.error?.message ?? "Notification status could not be updated.",
-      );
-    }
-
-    return {
+  let finding: FindingRecord;
+  let radar: RadarSummary;
+  try {
+    finding = await readFinding(db, claim.finding_id);
+    radar = await readRadar(db, claim.radar_id);
+  } catch {
+    return finishPreparationFailure(
+      db,
       notificationId,
-      status: "failed",
-      errorCode: "TELEGRAM_NOT_CONNECTED",
-    };
+      "unknown",
+      "NOTIFICATION_PREPARATION_FAILED",
+    );
   }
 
-  const telegram = dependencies.telegram ?? createTelegramClient();
+  let connectionResult: {
+    data: unknown;
+    error: { message: string; code?: string } | null;
+  };
+  try {
+    connectionResult = await db
+      .from("telegram_connections")
+      .select("chat_id")
+      .eq("user_id", claim.user_id)
+      .eq("chat_id", claim.destination_id)
+      .maybeSingle();
+  } catch {
+    return finishPreparationFailure(
+      db,
+      notificationId,
+      "unknown",
+      "NOTIFICATION_PREPARATION_FAILED",
+    );
+  }
+
+  if (connectionResult.error) {
+    return finishPreparationFailure(
+      db,
+      notificationId,
+      "unknown",
+      "NOTIFICATION_PREPARATION_FAILED",
+    );
+  }
+
+  if (!connectionResult.data) {
+    return finishPreparationFailure(
+      db,
+      notificationId,
+      "failed",
+      "TELEGRAM_NOT_CONNECTED",
+    );
+  }
 
   try {
+    const telegram = dependencies.telegram ?? createTelegramClient();
     const sentMessage = await telegram.sendMessage({
       chatId: claim.destination_id,
       text: formatNotificationText(radar, finding),

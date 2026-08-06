@@ -16,6 +16,67 @@ type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
+const radarDetailColumns =
+  "id,user_id,name,original_prompt,rules,status,interval_minutes,baseline_cutoff_at,last_checked_at,next_check_at,created_at,updated_at";
+const findingDetailColumns =
+  "id,radar_id,first_run_id,source_type,source_domain,source_url,canonical_url,fingerprint,event_key,title,summary,published_at,first_seen_at,last_seen_at,relevance_score,importance_score,match_reason,notification_eligible";
+const runDetailColumns =
+  "id,radar_id,trigger,status,started_at,finished_at,candidate_count,relevant_count,notification_count";
+
+function toPublicRadar(row: Record<string, unknown>) {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    name: row.name,
+    original_prompt: row.original_prompt,
+    rules: row.rules,
+    status: row.status,
+    interval_minutes: row.interval_minutes,
+    baseline_cutoff_at: row.baseline_cutoff_at,
+    last_checked_at: row.last_checked_at,
+    next_check_at: row.next_check_at,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+function toPublicFinding(row: Record<string, unknown>) {
+  return {
+    id: row.id,
+    radar_id: row.radar_id,
+    first_run_id: row.first_run_id,
+    source_type: row.source_type,
+    source_domain: row.source_domain,
+    source_url: row.source_url,
+    canonical_url: row.canonical_url,
+    fingerprint: row.fingerprint,
+    event_key: row.event_key,
+    title: row.title,
+    summary: row.summary,
+    published_at: row.published_at,
+    first_seen_at: row.first_seen_at,
+    last_seen_at: row.last_seen_at,
+    relevance_score: row.relevance_score,
+    importance_score: row.importance_score,
+    match_reason: row.match_reason,
+    notification_eligible: row.notification_eligible,
+  };
+}
+
+function toPublicRun(row: Record<string, unknown>) {
+  return {
+    id: row.id,
+    radar_id: row.radar_id,
+    trigger: row.trigger,
+    status: row.status,
+    started_at: row.started_at,
+    finished_at: row.finished_at,
+    candidate_count: row.candidate_count,
+    relevant_count: row.relevant_count,
+    notification_count: row.notification_count,
+  };
+}
+
 function invalidId(id: string): boolean {
   return !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(
     id,
@@ -96,19 +157,39 @@ export async function GET(_request: Request, { params }: RouteContext) {
     createAdminClient() as unknown as Parameters<typeof getMonitoringClient>[0],
   );
   const [radarResult, findingsResult, runsResult] = await Promise.all([
-    db.from("radars").select("*").eq("id", id).eq("user_id", state.user!.id).maybeSingle(),
-    db.from("findings").select("*").eq("radar_id", id).order("last_seen_at", { ascending: false }),
-    db.from("radar_runs").select("*").eq("radar_id", id).order("started_at", { ascending: false }),
+    db
+      .from("radars")
+      .select(radarDetailColumns)
+      .eq("id", id)
+      .eq("user_id", state.user!.id)
+      .maybeSingle(),
+    db
+      .from("findings")
+      .select(findingDetailColumns)
+      .eq("radar_id", id)
+      .order("last_seen_at", { ascending: false }),
+    db
+      .from("radar_runs")
+      .select(runDetailColumns)
+      .eq("radar_id", id)
+      .order("started_at", { ascending: false }),
   ]);
 
   if (radarResult.error || findingsResult.error || runsResult.error || !radarResult.data) {
     return NextResponse.json({ error: "DATABASE_ERROR" }, { status: 500 });
   }
 
+  const findings = Array.isArray(findingsResult.data) ? findingsResult.data : [];
+  const runs = Array.isArray(runsResult.data) ? runsResult.data : [];
+
   return NextResponse.json({
-    radar: radarResult.data,
-    findings: findingsResult.data ?? [],
-    runs: runsResult.data ?? [],
+    radar: toPublicRadar(radarResult.data as Record<string, unknown>),
+    findings: findings.map((row) =>
+      toPublicFinding(row as Record<string, unknown>),
+    ),
+    runs: runs.map((row) =>
+      toPublicRun(row as Record<string, unknown>),
+    ),
   });
 }
 
@@ -189,13 +270,15 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       .update({ name: update.radarName, rules: updatedRules })
       .eq("id", id)
       .eq("user_id", state.user!.id)
-      .select("*")
+      .select(radarDetailColumns)
       .single();
     if (updated.error || !updated.data) {
       return NextResponse.json({ error: "DATABASE_ERROR" }, { status: 500 });
     }
 
-    return NextResponse.json({ radar: updated.data });
+    return NextResponse.json({
+      radar: toPublicRadar(updated.data as Record<string, unknown>),
+    });
   } catch (error) {
     return updateErrorResponse(error);
   }

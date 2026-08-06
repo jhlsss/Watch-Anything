@@ -92,9 +92,9 @@ export async function POST(request: Request) {
 
   try {
     const radar = await createRadarFromSetup(parsed.data.setupId, user.id, db);
-    const run = await runRadar(radar.id, "baseline", { client: db });
     const cookieStore = await cookies();
     cookieStore.delete("wa_setup");
+    const run = await runRadar(radar.id, "baseline", { client: db });
 
     return NextResponse.json({ radar, run }, { status: 201 });
   } catch (error) {

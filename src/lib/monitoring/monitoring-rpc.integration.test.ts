@@ -33,6 +33,75 @@ describe("monitoring migration contract", () => {
     expect(migration).toMatch(
       /grant execute on function public\.claim_notification\(uuid\) to service_role/,
     );
+    expect(migration).toMatch(
+      /create or replace function public\.claim_guest_ai_request\([^)]*p_identity_hash text[^)]*\).*security definer set search_path = public, pg_temp/,
+    );
+    expect(migration).toMatch(/pg_advisory_xact_lock/);
+    expect(migration).toMatch(
+      /revoke all on function public\.claim_guest_ai_request\(text\) from public, anon, authenticated/,
+    );
+    expect(migration).toMatch(
+      /grant execute on function public\.claim_guest_ai_request\(text\) to service_role/,
+    );
+    expect(migration).toMatch(
+      /alter table public\.pending_radar_setups add column if not exists rule_token_hash text/,
+    );
+    expect(migration).toMatch(
+      /create unique index if not exists pending_radar_setups_pending_user_rule_token_hash_idx.*where status = 'pending' and rule_token_hash is not null/,
+    );
+    expect(migration).toMatch(
+      /for stale_run in select .* from public\.radar_runs .*status = 'running'.*lease_expires_at <= now\(\).*for update/,
+    );
+    expect(migration).toMatch(
+      /recovered_status := case .*source_success_count.*source_outcomes/,
+    );
+    expect(migration).toMatch(
+      /update public\.radar_runs .*status = recovered_status.*finished_at = timezone\('utc', now\(\)\).*lease_owner = null.*lease_expires_at = null/,
+    );
+    expect(migration).toMatch(
+      /where id = stale_run\.id.*status = 'running'.*lease_owner is not distinct from stale_run\.lease_owner/,
+    );
+    expect(migration).toMatch(
+      /update public\.notifications .*status = 'unknown'.*status = 'sending'.*claimed_at/,
+    );
+
+    const detailRoute = readFileSync(
+      resolve(process.cwd(), "src/app/api/radars/[id]/route.ts"),
+      "utf8",
+    );
+    expect(detailRoute).toContain("const radarDetailColumns");
+    expect(detailRoute).toContain("const runDetailColumns");
+    expect(detailRoute).toContain("select(runDetailColumns)");
+    expect(detailRoute).not.toMatch(/\.select\("\*"\)/);
+    const detailGetRoute = detailRoute.slice(
+      detailRoute.indexOf("export async function GET"),
+      detailRoute.indexOf("export async function PATCH"),
+    );
+    for (const internalField of [
+      "source_outcomes",
+      "internal_errors",
+      "error_code",
+      "lease_owner",
+      "lease_expires_at",
+    ]) {
+      expect(detailGetRoute).not.toContain(internalField);
+    }
+
+    const createRoute = readFileSync(
+      resolve(process.cwd(), "src/app/api/radars/route.ts"),
+      "utf8",
+    );
+    expect(createRoute.indexOf('cookieStore.delete("wa_setup")')).toBeGreaterThan(-1);
+    expect(createRoute.indexOf('cookieStore.delete("wa_setup")')).toBeLessThan(
+      createRoute.indexOf('runRadar(radar.id, "baseline"'),
+    );
+
+    const runRadarSource = readFileSync(
+      resolve(process.cwd(), "src/lib/monitoring/run-radar.ts"),
+      "utf8",
+    );
+    expect(runRadarSource).toContain("aiTimeoutMs");
+    expect(runRadarSource).toContain("Promise.race");
   });
 });
 
@@ -59,6 +128,7 @@ runIntegrationTest(
     let userId: string | undefined;
     const setupIds: string[] = [];
     const radarIds: string[] = [];
+    const guestIdentityHash = `task5-guest-${randomUUID()}`;
 
     try {
       const userResult = await admin.auth.admin.createUser({
@@ -72,6 +142,51 @@ runIntegrationTest(
 
       const profileResult = await admin.from("profiles").select("id").eq("id", userId!).single();
       expect(profileResult.error).toBeNull();
+
+      const quotaResults = await Promise.all(
+        Array.from({ length: 4 }, () =>
+          admin.rpc("claim_guest_ai_request", {
+            p_identity_hash: guestIdentityHash,
+          }),
+        ),
+      );
+      const quotaClaims = quotaResults.map((result) => {
+        expect(result.error).toBeNull();
+        return firstRow<{
+          allowed: boolean;
+          identity_count: number;
+          global_count: number;
+        }>(result.data);
+      });
+      expect(quotaClaims.filter((claim) => claim?.allowed)).toHaveLength(3);
+      expect(Math.max(...quotaClaims.map((claim) => claim?.identity_count ?? 0))).toBe(3);
+
+      const idempotentSetupIds = [randomUUID(), randomUUID()];
+      const idempotentSetupResults = await Promise.all(
+        idempotentSetupIds.map((setupId) => {
+          setupIds.push(setupId);
+          return admin.from("pending_radar_setups").insert({
+            id: setupId,
+            user_id: userId,
+            original_prompt: "Task 5 idempotency test",
+            radar_name: "Task 5 Idempotency",
+            rules: {
+              radarName: "Task 5 Idempotency",
+              subject: "Task 5",
+              aliases: [],
+              includeTopics: ["test"],
+              excludeTopics: [],
+              searchQuery: "Task 5",
+              importanceThreshold: 50,
+              intervalMinutes: 360,
+            },
+            rule_token_hash: "task5-rule-token-hash",
+            expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          });
+        }),
+      );
+      expect(idempotentSetupResults.filter((result) => !result.error)).toHaveLength(1);
+      expect(idempotentSetupResults.filter((result) => result.error?.code === "23505")).toHaveLength(1);
 
       const chatId = Math.floor(Date.now() / 1000) + Math.floor(Math.random() * 100000);
       const connectionResult = await admin.from("telegram_connections").insert({
@@ -177,11 +292,35 @@ runIntegrationTest(
         .map((result) => firstRow<{ notification_id: string }>(result.data))
         .filter((claim): claim is { notification_id: string } => Boolean(claim?.notification_id));
       expect(claimedNotifications).toHaveLength(1);
+
+      const staleSendingResult = await admin
+        .from("notifications")
+        .update({
+          status: "sending",
+          claimed_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        })
+        .eq("id", notificationResult.data!.id);
+      expect(staleSendingResult.error).toBeNull();
+
+      const staleClaimResult = await admin.rpc("claim_notification", {
+        p_notification_id: notificationResult.data!.id,
+      });
+      expect(staleClaimResult.error).toBeNull();
+      expect(firstRow(staleClaimResult.data)).toBeNull();
+
+      const staleNotificationState = await admin
+        .from("notifications")
+        .select("status")
+        .eq("id", notificationResult.data!.id)
+        .single();
+      expect(staleNotificationState.error).toBeNull();
+      expect(staleNotificationState.data?.status).toBe("unknown");
     } finally {
       if (userId) {
         await admin.from("radars").delete().eq("user_id", userId);
         await admin.from("pending_radar_setups").delete().eq("user_id", userId);
         await admin.from("telegram_connections").delete().eq("user_id", userId);
+        await admin.from("guest_ai_requests").delete().eq("identity_hash", guestIdentityHash);
         await admin.auth.admin.deleteUser(userId);
       }
     }
