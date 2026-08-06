@@ -411,6 +411,9 @@ class MonitoringFakeClient implements MonitoringClient {
   radarUpdateRows = true;
   terminalUpdateFailures = 0;
   sourcePersistenceFailures = 0;
+  persistFindingRpcError: string | null = null;
+  tavilyBaselineCompletedAt: string | null = null;
+  runLeaseExpiresAt = "2099-08-06T00:00:00.000Z";
   private findingCounter = 0;
 
   from(table: string): MonitoringQuery {
@@ -450,7 +453,13 @@ class MonitoringFakeClient implements MonitoringClient {
         return { data: null, error: null };
       }
       if (table === "radars") {
-        return { data: testRadar, error: null };
+        return {
+          data: {
+            ...testRadar,
+            tavily_baseline_completed_at: this.tavilyBaselineCompletedAt,
+          },
+          error: null,
+        };
       }
       if (table === "radar_runs") {
         if (filters.status === "running" && this.runStatus !== "running") {
@@ -463,7 +472,7 @@ class MonitoringFakeClient implements MonitoringClient {
             status: this.runStatus,
             trigger: "baseline",
             lease_owner: "claim-owner",
-            lease_expires_at: "2099-08-06T00:00:00.000Z",
+            lease_expires_at: this.runLeaseExpiresAt,
           },
           error: null,
         };
@@ -535,11 +544,52 @@ class MonitoringFakeClient implements MonitoringClient {
     return query as unknown as MonitoringQuery;
   }
 
-  rpc(functionName: string) {
+  rpc(functionName: string, args: Record<string, unknown> = {}) {
     this.rpcCalls.push(functionName);
     if (functionName === "claim_radar_run") {
       return Promise.resolve({
         data: [{ run_id: "run-1", lease_owner: "claim-owner", error_code: null }],
+        error: null,
+      });
+    }
+    if (functionName === "persist_run_finding") {
+      if (this.persistFindingRpcError) {
+        return Promise.resolve({
+          data: null,
+          error: { message: this.persistFindingRpcError },
+        });
+      }
+      if (this.runStatus !== "running") {
+        return Promise.resolve({
+          data: null,
+          error: { message: "RUN_NOT_CLAIMED" },
+        });
+      }
+      this.findingCounter += 1;
+      this.findingInserts.push({
+        source_url: args.p_source_url,
+        fingerprint: args.p_fingerprint,
+        event_key: args.p_event_key,
+      });
+      return Promise.resolve({
+        data: [
+          {
+            finding_id: `finding-rpc-${this.findingCounter}`,
+            radar_id: "radar-1",
+            fingerprint: String(args.p_fingerprint),
+            event_key: (args.p_event_key as string | null) ?? null,
+            importance_score: Number(args.p_importance_score ?? 0),
+            first_seen_during_baseline: !Boolean(args.p_source_was_baselined),
+            notification_eligible:
+              Boolean(args.p_source_was_baselined) && Boolean(args.p_relevant),
+          },
+        ],
+        error: null,
+      });
+    }
+    if (functionName === "mark_source_baseline_for_run") {
+      return Promise.resolve({
+        data: this.radarUpdateRows ? [true] : [],
         error: null,
       });
     }
@@ -559,7 +609,11 @@ describe("run pipeline", () => {
     });
 
     expect(result.status).toBe("success");
-    expect(client.rpcCalls).toEqual(["claim_radar_run"]);
+    expect(client.rpcCalls).toEqual([
+      "claim_radar_run",
+      "mark_source_baseline_for_run",
+      "mark_source_baseline_for_run",
+    ]);
   });
 
   it("does not fetch when the claimed run is no longer running", async () => {
@@ -755,5 +809,100 @@ describe("run pipeline", () => {
 
     expect(result.status).toBe("success");
     expect(client.findingInserts).toHaveLength(1);
+  });
+
+  it("does not write a Finding when the lease-safe persistence RPC loses the lease", async () => {
+    const client = new MonitoringFakeClient();
+    client.persistFindingRpcError = "RUN_NOT_CLAIMED";
+
+    await expect(
+      runRadar("radar-1", "baseline", {
+        client,
+        searchTavily: async () => [testCandidate],
+        fetchRss: async () => [],
+        evaluate: async () => [
+          {
+            candidate: testCandidate,
+            evaluation: {
+              relevant: true,
+              relevance_score: 90,
+              importance_score: 90,
+              confidence: 0.9,
+              event_key: "lease-race-event",
+              duplicate_of_event_key: null,
+              reason: "matches",
+            },
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: "RUN_NOT_CLAIMED" });
+
+    expect(client.rpcCalls).toContain("persist_run_finding");
+    expect(client.findingInserts).toHaveLength(0);
+  });
+
+  it("passes run lease context to notification creation and sending", async () => {
+    const client = new MonitoringFakeClient();
+    client.tavilyBaselineCompletedAt = "2026-08-05T00:00:00.000Z";
+    const createNotification = vi.fn().mockResolvedValue({
+      id: "notification-1",
+      status: "pending",
+    });
+    const sendNotification = vi.fn().mockResolvedValue({
+      notificationId: "notification-1",
+      status: "sent",
+      messageId: 1,
+    });
+
+    await runRadar("radar-1", "baseline", {
+      client,
+      searchTavily: async () => [testCandidate],
+      fetchRss: async () => [],
+      evaluate: async () => [
+        {
+          candidate: testCandidate,
+          evaluation: {
+            relevant: true,
+            relevance_score: 90,
+            importance_score: 90,
+            confidence: 0.9,
+            event_key: "notification-context-event",
+            duplicate_of_event_key: null,
+            reason: "matches",
+          },
+        },
+      ],
+      createNotification,
+      sendNotification,
+    });
+
+    expect(createNotification.mock.calls[0]?.[3]).toEqual({
+      runId: "run-1",
+      leaseOwner: "claim-owner",
+    });
+    expect(sendNotification.mock.calls[0]?.[1]).toMatchObject({
+      runId: "run-1",
+      leaseOwner: "claim-owner",
+    });
+  });
+
+  it("stops waiting for source work at the claimed lease deadline", async () => {
+    const client = new MonitoringFakeClient();
+    client.runLeaseExpiresAt = new Date(Date.now() + 20).toISOString();
+    const startedAt = Date.now();
+
+    await expect(
+      executeClaimedRun("run-1", "claim-owner", {
+        client,
+        searchTavily: () => new Promise<Candidate[]>(() => undefined),
+        fetchRss: async () => [],
+      }),
+    ).rejects.toMatchObject({ code: "RUN_DEADLINE_EXCEEDED" });
+
+    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(client.terminalRunUpdates.at(-1)).toMatchObject({
+      lease_owner: null,
+      lease_expires_at: null,
+    });
   });
 });

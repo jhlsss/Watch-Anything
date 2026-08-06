@@ -58,6 +58,14 @@ export type NotificationSendResult = {
 type NotificationDependencies = {
   client?: MonitoringClient;
   telegram?: TelegramSender;
+  deadlineAt?: number;
+};
+
+const MAX_TIMER_MS = 2_147_000_000;
+
+export type NotificationRunContext = {
+  runId: string;
+  leaseOwner: string;
 };
 
 function notificationDedupeKey(finding: FindingRecord): string {
@@ -164,6 +172,60 @@ export async function createPendingNotification(
   );
 }
 
+function throwNotificationRpcError(
+  error: { message: string; code?: string } | null,
+): void {
+  if (!error) {
+    return;
+  }
+
+  const stableCode = error.message.match(
+    /RUN_NOT_CLAIMED|FINDING_NOT_FOUND|NOTIFICATION_NOT_FOUND/u,
+  )?.[0];
+  throw new MonitoringError(stableCode ?? "DATABASE_ERROR", error.message);
+}
+
+export async function createPendingNotificationForRun(
+  findingId: string,
+  destinationId: string,
+  context: NotificationRunContext,
+  client?: MonitoringClient,
+): Promise<NotificationRecord> {
+  const db = getMonitoringClient(client);
+  const result = await db.rpc("create_pending_notification_for_run", {
+    p_run_id: context.runId,
+    p_lease_owner: context.leaseOwner,
+    p_finding_id: findingId,
+    p_destination_id: destinationId,
+  });
+  throwNotificationRpcError(result.error);
+
+  const row = firstRpcRow<{
+    notification_id: string;
+    finding_id: string;
+    radar_id: string;
+    user_id: string;
+    destination_id: string;
+    status: NotificationRecord["status"];
+  }>(result.data);
+
+  if (!row?.notification_id) {
+    throw new MonitoringError(
+      "DATABASE_ERROR",
+      "Notification creation returned no row.",
+    );
+  }
+
+  return {
+    id: row.notification_id,
+    finding_id: row.finding_id,
+    radar_id: row.radar_id,
+    user_id: row.user_id,
+    destination_id: row.destination_id,
+    status: row.status,
+  };
+}
+
 function formatNotificationText(radar: RadarSummary, finding: FindingRecord): string {
   return [
     radar.name,
@@ -173,6 +235,44 @@ function formatNotificationText(radar: RadarSummary, finding: FindingRecord): st
     finding.source_url,
     "Importance and confidence indicate a rule match, not guaranteed factual truth.",
   ].join("\n\n");
+}
+
+function runDeadlineError(): MonitoringError {
+  return new MonitoringError(
+    "RUN_DEADLINE_EXCEEDED",
+    "Run lease deadline was reached.",
+  );
+}
+
+function withNotificationDeadline<T>(
+  promise: PromiseLike<T>,
+  deadlineAt: number | undefined,
+): Promise<T> {
+  if (deadlineAt === undefined) {
+    return Promise.resolve(promise);
+  }
+
+  const remainingMs = deadlineAt - Date.now();
+  if (remainingMs <= 0) {
+    return Promise.reject(runDeadlineError());
+  }
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  // Promise.race observes the provider promise, while the timeout winner keeps
+  // the late provider result out of the notification state machine.
+  const observedPromise = Promise.resolve(promise);
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeoutId = setTimeout(
+      () => reject(runDeadlineError()),
+      Math.min(remainingMs, MAX_TIMER_MS),
+    );
+  });
+
+  return Promise.race([observedPromise, timeoutPromise]).finally(() => {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
+  });
 }
 
 async function updateNotification(
@@ -221,9 +321,12 @@ export async function sendPendingNotification(
   dependencies: NotificationDependencies = {},
 ): Promise<NotificationSendResult | null> {
   const db = getMonitoringClient(dependencies.client);
-  const claimResult = await db.rpc("claim_notification", {
-    p_notification_id: notificationId,
-  });
+  const claimResult = await withNotificationDeadline(
+    db.rpc("claim_notification", {
+      p_notification_id: notificationId,
+    }),
+    dependencies.deadlineAt,
+  );
   throwDatabaseError(claimResult.error);
 
   const claim = firstRpcRow<ClaimedNotification>(claimResult.data);
@@ -235,14 +338,22 @@ export async function sendPendingNotification(
   let finding: FindingRecord;
   let radar: RadarSummary;
   try {
-    finding = await readFinding(db, claim.finding_id);
-    radar = await readRadar(db, claim.radar_id);
-  } catch {
+    finding = await withNotificationDeadline(
+      readFinding(db, claim.finding_id),
+      dependencies.deadlineAt,
+    );
+    radar = await withNotificationDeadline(
+      readRadar(db, claim.radar_id),
+      dependencies.deadlineAt,
+    );
+  } catch (error) {
     return finishPreparationFailure(
       db,
       notificationId,
       "unknown",
-      "NOTIFICATION_PREPARATION_FAILED",
+      error instanceof MonitoringError && error.code === "RUN_DEADLINE_EXCEEDED"
+        ? "RUN_DEADLINE_EXCEEDED"
+        : "NOTIFICATION_PREPARATION_FAILED",
     );
   }
 
@@ -251,18 +362,23 @@ export async function sendPendingNotification(
     error: { message: string; code?: string } | null;
   };
   try {
-    connectionResult = await db
-      .from("telegram_connections")
-      .select("chat_id")
-      .eq("user_id", claim.user_id)
-      .eq("chat_id", claim.destination_id)
-      .maybeSingle();
-  } catch {
+    connectionResult = await withNotificationDeadline(
+      db
+        .from("telegram_connections")
+        .select("chat_id")
+        .eq("user_id", claim.user_id)
+        .eq("chat_id", claim.destination_id)
+        .maybeSingle(),
+      dependencies.deadlineAt,
+    );
+  } catch (error) {
     return finishPreparationFailure(
       db,
       notificationId,
       "unknown",
-      "NOTIFICATION_PREPARATION_FAILED",
+      error instanceof MonitoringError && error.code === "RUN_DEADLINE_EXCEEDED"
+        ? "RUN_DEADLINE_EXCEEDED"
+        : "NOTIFICATION_PREPARATION_FAILED",
     );
   }
 
@@ -286,10 +402,13 @@ export async function sendPendingNotification(
 
   try {
     const telegram = dependencies.telegram ?? createTelegramClient();
-    const sentMessage = await telegram.sendMessage({
-      chatId: claim.destination_id,
-      text: formatNotificationText(radar, finding),
-    });
+    const sentMessage = await withNotificationDeadline(
+      telegram.sendMessage({
+        chatId: claim.destination_id,
+        text: formatNotificationText(radar, finding),
+      }),
+      dependencies.deadlineAt,
+    );
     const updated = await updateNotification(db, notificationId, {
       status: "sent",
       telegram_message_id: sentMessage.message_id,
@@ -319,7 +438,12 @@ export async function sendPendingNotification(
       error && typeof error === "object" && "code" in error
         ? String(error.code)
         : "TELEGRAM_API_ERROR";
-    const status = errorCode === "TELEGRAM_RESULT_UNKNOWN" ? "unknown" : "failed";
+    const status =
+      errorCode === "TELEGRAM_RESULT_UNKNOWN" ||
+      errorCode === "NOTIFICATION_TIMEOUT" ||
+      errorCode === "RUN_DEADLINE_EXCEEDED"
+        ? "unknown"
+        : "failed";
     const updated = await updateNotification(db, notificationId, {
       status,
       error_code: errorCode,

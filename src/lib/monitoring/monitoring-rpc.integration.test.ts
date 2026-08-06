@@ -64,6 +64,21 @@ describe("monitoring migration contract", () => {
     expect(migration).toMatch(
       /update public\.notifications .*status = 'unknown'.*status = 'sending'.*claimed_at/,
     );
+    expect(migration).toMatch(
+      /create or replace function public\.persist_run_finding\(.*p_run_id uuid.*p_lease_owner uuid/,
+    );
+    expect(migration).toMatch(
+      /persist_run_finding.*for update.*status = 'running'.*lease_owner.*lease_expires_at > now\(\).*run_findings/,
+    );
+    expect(migration).toMatch(
+      /create or replace function public\.create_pending_notification_for_run\(.*p_run_id uuid.*p_lease_owner uuid/,
+    );
+    expect(migration).toMatch(
+      /create_pending_notification_for_run.*status = 'running'.*lease_owner.*lease_expires_at > now\(\).*notifications/,
+    );
+    expect(migration).toMatch(
+      /create or replace function public\.mark_source_baseline_for_run\(.*p_run_id uuid.*p_lease_owner uuid/,
+    );
 
     const detailRoute = readFileSync(
       resolve(process.cwd(), "src/app/api/radars/[id]/route.ts"),
@@ -87,13 +102,13 @@ describe("monitoring migration contract", () => {
       expect(detailGetRoute).not.toContain(internalField);
     }
 
-    const createRoute = readFileSync(
+    const createRouteOrder = readFileSync(
       resolve(process.cwd(), "src/app/api/radars/route.ts"),
       "utf8",
     );
-    expect(createRoute.indexOf('cookieStore.delete("wa_setup")')).toBeGreaterThan(-1);
-    expect(createRoute.indexOf('cookieStore.delete("wa_setup")')).toBeLessThan(
-      createRoute.indexOf('runRadar(radar.id, "baseline"'),
+    expect(createRouteOrder.indexOf('cookieStore.delete("wa_setup")')).toBeGreaterThan(-1);
+    expect(createRouteOrder.indexOf('cookieStore.delete("wa_setup")')).toBeLessThan(
+      createRouteOrder.indexOf('runRadar(radar.id, "baseline"'),
     );
 
     const runRadarSource = readFileSync(
@@ -102,6 +117,25 @@ describe("monitoring migration contract", () => {
     );
     expect(runRadarSource).toContain("aiTimeoutMs");
     expect(runRadarSource).toContain("Promise.race");
+    expect(runRadarSource).toContain('rpc("persist_run_finding"');
+    expect(runRadarSource).toContain("lease_expires_at");
+    expect(runRadarSource).toContain("deadlineAt");
+    expect(runRadarSource).not.toMatch(/from\("findings"\)\.insert/);
+
+    const notificationsSource = readFileSync(
+      resolve(process.cwd(), "src/lib/monitoring/notifications.ts"),
+      "utf8",
+    );
+    expect(notificationsSource).toContain(
+      'rpc("create_pending_notification_for_run"',
+    );
+
+    const createRoute = readFileSync(
+      resolve(process.cwd(), "src/app/api/radars/route.ts"),
+      "utf8",
+    );
+    expect(createRoute).toContain("toPublicRadar");
+    expect(createRoute).not.toContain("return NextResponse.json({ radar, run }");
   });
 });
 

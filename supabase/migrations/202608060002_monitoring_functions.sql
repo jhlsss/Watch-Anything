@@ -517,3 +517,378 @@ $$;
 
 revoke all on function public.claim_guest_ai_request(text) from public, anon, authenticated;
 grant execute on function public.claim_guest_ai_request(text) to service_role;
+
+create or replace function public.persist_run_finding(
+  p_run_id uuid,
+  p_lease_owner uuid,
+  p_source_type text,
+  p_source_domain text,
+  p_source_url text,
+  p_title text,
+  p_summary text,
+  p_published_at timestamptz,
+  p_fingerprint text,
+  p_event_key text,
+  p_source_was_baselined boolean,
+  p_relevant boolean,
+  p_relevance_score integer,
+  p_confidence numeric,
+  p_importance_score integer,
+  p_match_reason text
+)
+returns table (
+  finding_id uuid,
+  radar_id uuid,
+  fingerprint text,
+  event_key text,
+  importance_score integer,
+  first_seen_during_baseline boolean,
+  notification_eligible boolean
+)
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  radar_id_for_run uuid;
+  radar_row public.radars%rowtype;
+  run_row public.radar_runs%rowtype;
+  finding_row public.findings%rowtype;
+  threshold integer;
+  first_seen boolean;
+  current_eligible boolean;
+begin
+  select rr.radar_id
+    into radar_id_for_run
+    from public.radar_runs rr
+   where rr.id = p_run_id;
+
+  if radar_id_for_run is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  select r.*
+    into radar_row
+    from public.radars r
+   where r.id = radar_id_for_run
+   for update;
+
+  select rr.*
+    into run_row
+    from public.radar_runs rr
+   where rr.id = p_run_id
+     and rr.radar_id = radar_id_for_run
+     and rr.status = 'running'
+     and rr.lease_owner = p_lease_owner
+     and rr.lease_expires_at > now()
+   for update;
+
+  if not found then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  threshold := coalesce((radar_row.rules ->> 'importanceThreshold')::integer, 100);
+
+  select f.*
+    into finding_row
+    from public.findings f
+   where f.radar_id = radar_id_for_run
+     and f.fingerprint = p_fingerprint
+   for update;
+
+  if found then
+    first_seen := finding_row.first_seen_during_baseline;
+    current_eligible := not first_seen
+      and p_source_was_baselined
+      and p_relevant
+      and p_importance_score >= threshold;
+
+    update public.findings
+       set last_seen_at = timezone('utc', now()),
+           event_key = coalesce(finding_row.event_key, p_event_key),
+           relevance_score = p_relevance_score,
+           importance_score = p_importance_score,
+           match_reason = p_match_reason,
+           notification_eligible = finding_row.notification_eligible or current_eligible
+     where id = finding_row.id
+    returning * into finding_row;
+  else
+    first_seen := not p_source_was_baselined;
+    current_eligible := not first_seen
+      and p_relevant
+      and p_importance_score >= threshold;
+
+    insert into public.findings (
+      radar_id,
+      first_run_id,
+      source_type,
+      source_domain,
+      source_url,
+      canonical_url,
+      fingerprint,
+      event_key,
+      title,
+      summary,
+      published_at,
+      last_seen_at,
+      relevance_score,
+      importance_score,
+      match_reason,
+      notification_eligible,
+      first_seen_during_baseline
+    )
+    values (
+      radar_id_for_run,
+      p_run_id,
+      p_source_type,
+      p_source_domain,
+      p_source_url,
+      p_source_url,
+      p_fingerprint,
+      p_event_key,
+      p_title,
+      p_summary,
+      p_published_at,
+      timezone('utc', now()),
+      p_relevance_score,
+      p_importance_score,
+      p_match_reason,
+      current_eligible,
+      first_seen
+    )
+    returning * into finding_row;
+  end if;
+
+  insert into public.run_findings (
+    run_id,
+    finding_id,
+    relevant,
+    relevance_score,
+    confidence,
+    importance_score,
+    decision,
+    explanation
+  )
+  values (
+    p_run_id,
+    finding_row.id,
+    p_relevant,
+    p_relevance_score,
+    p_confidence,
+    p_importance_score,
+    case when p_relevant then 'relevant' else 'not_relevant' end,
+    p_match_reason
+  )
+  on conflict (run_id, finding_id) do update
+    set relevant = excluded.relevant,
+        relevance_score = excluded.relevance_score,
+        confidence = excluded.confidence,
+        importance_score = excluded.importance_score,
+        decision = excluded.decision,
+        explanation = excluded.explanation;
+
+  return query
+  select finding_row.id,
+         radar_id_for_run,
+         finding_row.fingerprint,
+         finding_row.event_key,
+         finding_row.importance_score,
+         finding_row.first_seen_during_baseline,
+         finding_row.notification_eligible;
+end;
+$$;
+
+create or replace function public.create_pending_notification_for_run(
+  p_run_id uuid,
+  p_lease_owner uuid,
+  p_finding_id uuid,
+  p_destination_id text
+)
+returns table (
+  notification_id uuid,
+  finding_id uuid,
+  radar_id uuid,
+  user_id uuid,
+  destination_id text,
+  status text
+)
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  radar_id_for_run uuid;
+  radar_row public.radars%rowtype;
+  run_row public.radar_runs%rowtype;
+  finding_row public.findings%rowtype;
+  notification_row public.notifications%rowtype;
+  dedupe_key_value text;
+begin
+  select rr.radar_id
+    into radar_id_for_run
+    from public.radar_runs rr
+   where rr.id = p_run_id;
+
+  if radar_id_for_run is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  select r.*
+    into radar_row
+    from public.radars r
+   where r.id = radar_id_for_run
+   for update;
+
+  select rr.*
+    into run_row
+    from public.radar_runs rr
+   where rr.id = p_run_id
+     and rr.radar_id = radar_id_for_run
+     and rr.status = 'running'
+     and rr.lease_owner = p_lease_owner
+     and rr.lease_expires_at > now()
+   for update;
+
+  if not found then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  select f.*
+    into finding_row
+    from public.findings f
+   where f.id = p_finding_id
+     and f.radar_id = radar_id_for_run
+   for update;
+
+  if not found then
+    raise exception 'FINDING_NOT_FOUND';
+  end if;
+
+  dedupe_key_value := coalesce(nullif(btrim(finding_row.event_key), ''), finding_row.fingerprint);
+
+  insert into public.notifications (
+    finding_id,
+    radar_id,
+    user_id,
+    destination_id,
+    dedupe_key,
+    status
+  )
+  values (
+    finding_row.id,
+    radar_id_for_run,
+    radar_row.user_id,
+    p_destination_id,
+    dedupe_key_value,
+    'pending'
+  )
+  on conflict do nothing
+  returning * into notification_row;
+
+  if not found then
+    select n.*
+      into notification_row
+      from public.notifications n
+     where (
+       n.finding_id = finding_row.id
+       and n.destination_id = p_destination_id
+     )
+        or (
+          n.radar_id = radar_id_for_run
+          and n.dedupe_key = dedupe_key_value
+          and n.destination_id = p_destination_id
+        )
+     order by n.id
+     limit 1
+     for update;
+  end if;
+
+  if not found then
+    raise exception 'NOTIFICATION_NOT_FOUND';
+  end if;
+
+  return query
+  select notification_row.id,
+         notification_row.finding_id,
+         notification_row.radar_id,
+         notification_row.user_id,
+         notification_row.destination_id,
+         notification_row.status;
+end;
+$$;
+
+create or replace function public.mark_source_baseline_for_run(
+  p_run_id uuid,
+  p_lease_owner uuid,
+  p_source_key text,
+  p_completed_at timestamptz
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  radar_id_for_run uuid;
+  completed_id uuid;
+begin
+  select rr.radar_id
+    into radar_id_for_run
+    from public.radar_runs rr
+   where rr.id = p_run_id;
+
+  if radar_id_for_run is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  perform 1
+    from public.radars r
+   where r.id = radar_id_for_run
+   for update;
+
+  perform 1
+    from public.radar_runs rr
+   where rr.id = p_run_id
+     and rr.radar_id = radar_id_for_run
+     and rr.status = 'running'
+     and rr.lease_owner = p_lease_owner
+     and rr.lease_expires_at > now()
+   for update;
+
+  if not found then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  if p_source_key = 'tavily' then
+    update public.radars
+       set tavily_baseline_completed_at = p_completed_at,
+           updated_at = timezone('utc', now())
+     where id = radar_id_for_run
+    returning id into completed_id;
+  elsif p_source_key = 'music_news_rss' then
+    update public.radar_sources
+       set baseline_completed_at = p_completed_at,
+           last_error = null,
+           updated_at = timezone('utc', now())
+     where radar_id = radar_id_for_run
+       and source_key = 'music_news_rss'
+    returning id into completed_id;
+  else
+    raise exception 'INVALID_SOURCE_KEY';
+  end if;
+
+  if completed_id is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  return true;
+end;
+$$;
+
+revoke all on function public.persist_run_finding(uuid, uuid, text, text, text, text, text, timestamptz, text, text, boolean, boolean, integer, numeric, integer, text) from public, anon, authenticated;
+revoke all on function public.create_pending_notification_for_run(uuid, uuid, uuid, text) from public, anon, authenticated;
+revoke all on function public.mark_source_baseline_for_run(uuid, uuid, text, timestamptz) from public, anon, authenticated;
+
+grant execute on function public.persist_run_finding(uuid, uuid, text, text, text, text, text, timestamptz, text, text, boolean, boolean, integer, numeric, integer, text) to service_role;
+grant execute on function public.create_pending_notification_for_run(uuid, uuid, uuid, text) to service_role;
+grant execute on function public.mark_source_baseline_for_run(uuid, uuid, text, timestamptz) to service_role;

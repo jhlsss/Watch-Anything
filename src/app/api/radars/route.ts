@@ -10,12 +10,53 @@ import {
 import { runRadar } from "@/lib/monitoring/run-radar";
 import { createClient as createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createSessionClient } from "@/lib/supabase/server";
+import type { RunResult } from "@/types/contracts";
 
 export const maxDuration = 60;
 
 const setupIdSchema = z.object({
   setupId: z.uuid(),
 });
+
+function toPublicRadar(row: {
+  id: string;
+  user_id: string;
+  name: string;
+  original_prompt: string;
+  rules: unknown;
+  status: string;
+  interval_minutes: number;
+  baseline_cutoff_at: string;
+  last_checked_at?: string | null;
+  next_check_at: string;
+  created_at?: string;
+  updated_at?: string;
+}) {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    name: row.name,
+    original_prompt: row.original_prompt,
+    rules: row.rules,
+    status: row.status,
+    interval_minutes: row.interval_minutes,
+    baseline_cutoff_at: row.baseline_cutoff_at,
+    last_checked_at: row.last_checked_at ?? null,
+    next_check_at: row.next_check_at,
+    created_at: row.created_at ?? null,
+    updated_at: row.updated_at ?? null,
+  };
+}
+
+function toPublicRun(run: RunResult) {
+  return {
+    runId: run.runId,
+    status: run.status,
+    candidateCount: run.candidateCount,
+    relevantCount: run.relevantCount,
+    notificationCount: run.notificationCount,
+  };
+}
 
 function errorResponse(error: unknown): NextResponse {
   const code =
@@ -96,7 +137,10 @@ export async function POST(request: Request) {
     cookieStore.delete("wa_setup");
     const run = await runRadar(radar.id, "baseline", { client: db });
 
-    return NextResponse.json({ radar, run }, { status: 201 });
+    return NextResponse.json(
+      { radar: toPublicRadar(radar), run: toPublicRun(run) },
+      { status: 201 },
+    );
   } catch (error) {
     return errorResponse(error);
   }

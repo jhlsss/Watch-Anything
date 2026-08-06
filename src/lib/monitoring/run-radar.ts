@@ -2,8 +2,9 @@ import { randomUUID } from "node:crypto";
 
 import { evaluateCandidates, type CandidateEvaluation } from "@/lib/ai/evaluate-candidates";
 import {
-  createPendingNotification as defaultCreatePendingNotification,
+  createPendingNotificationForRun as defaultCreatePendingNotificationForRun,
   sendPendingNotification as defaultSendPendingNotification,
+  type NotificationRunContext,
   type NotificationSendResult,
 } from "@/lib/monitoring/notifications";
 import {
@@ -63,10 +64,16 @@ type PendingNotificationCreator = (
   findingId: string,
   destinationId: string,
   client?: MonitoringClient,
+  context?: NotificationRunContext,
 ) => Promise<{ id: string; status: string }>;
 type PendingNotificationSender = (
   notificationId: string,
-  dependencies?: { client?: MonitoringClient },
+  dependencies?: {
+    client?: MonitoringClient;
+    runId?: string;
+    leaseOwner?: string;
+    deadlineAt?: number;
+  },
 ) => Promise<NotificationSendResult | null>;
 
 export type RunRadarDependencies = {
@@ -102,6 +109,64 @@ type SavedFinding = {
 };
 
 const DEFAULT_AI_TIMEOUT_MS = 20_000;
+const MAX_TIMER_MS = 2_147_000_000;
+
+function runDeadlineError(): MonitoringError {
+  return new MonitoringError(
+    "RUN_DEADLINE_EXCEEDED",
+    "Run lease deadline was reached.",
+  );
+}
+
+function assertRunDeadline(deadlineAt: number): void {
+  if (Date.now() >= deadlineAt) {
+    throw runDeadlineError();
+  }
+}
+
+function withRunDeadline<T>(
+  promise: PromiseLike<T>,
+  deadlineAt: number,
+  timeoutError = runDeadlineError(),
+): Promise<T> {
+  const remainingMs = deadlineAt - Date.now();
+  if (remainingMs <= 0) {
+    return Promise.reject(timeoutError);
+  }
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  // Promise.race observes the underlying operation, but only the winner can
+  // advance this pipeline; late provider results cannot change run state.
+  const observedPromise = Promise.resolve(promise);
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeoutId = setTimeout(
+      () => reject(timeoutError),
+      Math.min(remainingMs, MAX_TIMER_MS),
+    );
+  });
+
+  return Promise.race([observedPromise, timeoutPromise]).finally(() => {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
+  });
+}
+
+function withAiTimeout<T>(
+  promise: PromiseLike<T>,
+  deadlineAt: number,
+  timeoutMs: number,
+): Promise<T> {
+  const aiDeadlineAt = Math.min(
+    deadlineAt,
+    Date.now() + Math.max(1, timeoutMs),
+  );
+  const timeoutError =
+    aiDeadlineAt < deadlineAt
+      ? new MonitoringError("AI_TIMEOUT", "AI evaluation exceeded its time budget.")
+      : runDeadlineError();
+  return withRunDeadline(promise, aiDeadlineAt, timeoutError);
+}
 
 function errorCode(error: unknown, fallback = "SOURCE_REQUEST_FAILED"): string {
   if (error && typeof error === "object" && "code" in error) {
@@ -109,6 +174,32 @@ function errorCode(error: unknown, fallback = "SOURCE_REQUEST_FAILED"): string {
   }
 
   return fallback;
+}
+
+function throwRunRpcError(
+  error: { message: string; code?: string } | null,
+): void {
+  if (!error) {
+    return;
+  }
+
+  const stableCode = error.message.match(
+    /RUN_NOT_CLAIMED|FINDING_NOT_FOUND|INVALID_SOURCE_KEY/u,
+  )?.[0];
+  throw new MonitoringError(stableCode ?? "DATABASE_ERROR", error.message);
+}
+
+function rpcReturnedTrue(data: unknown): boolean {
+  const row = firstRpcRow<unknown>(data);
+  if (row === true) {
+    return true;
+  }
+
+  return Boolean(
+    row &&
+      typeof row === "object" &&
+      Object.values(row as Record<string, unknown>).some((value) => value === true),
+  );
 }
 
 function asRadarRules(value: unknown): RadarRules {
@@ -192,15 +283,6 @@ async function retryTerminalWrite<T>(operation: () => Promise<T>): Promise<T> {
   throw lastError;
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutError: Error): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout>;
-  const timeoutPromise = new Promise<T>((_, reject) => {
-    timeoutId = setTimeout(() => reject(timeoutError), timeoutMs);
-  });
-
-  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
-}
-
 function isSourceBaselineComplete(
   radar: PipelineRadar,
   source: keyof SourceBaselineState,
@@ -280,20 +362,15 @@ async function readRun(
         ? rawRun.source_success_count
         : 0,
   };
-  if (run.lease_expires_at && new Date(run.lease_expires_at) <= now) {
+  if (
+    !run.lease_expires_at ||
+    !Number.isFinite(Date.parse(run.lease_expires_at)) ||
+    new Date(run.lease_expires_at) <= now
+  ) {
     throw new MonitoringError("RUN_NOT_CLAIMED", "Run lease has expired.");
   }
 
   return run;
-}
-
-async function assertClaimedRun(
-  client: MonitoringClient,
-  runId: string,
-  leaseOwner: string,
-  now: Date,
-): Promise<void> {
-  await readRun(client, runId, leaseOwner, now);
 }
 
 async function readSourceRow(
@@ -330,6 +407,7 @@ async function persistSourceOutcomes(
     .eq("id", runId)
     .eq("status", "running")
     .eq("lease_owner", leaseOwner)
+    .gt("lease_expires_at", new Date().toISOString())
     .select("id")
     .maybeSingle();
   throwDatabaseError(result.error);
@@ -387,20 +465,6 @@ function buildEvaluationMap(
   );
 }
 
-async function readExistingFindings(
-  client: MonitoringClient,
-  radarId: string,
-): Promise<FindingRecord[]> {
-  const result = await client
-    .from("findings")
-    .select(
-      "id,radar_id,fingerprint,event_key,importance_score,first_seen_during_baseline,notification_eligible",
-    )
-    .eq("radar_id", radarId);
-  throwDatabaseError(result.error);
-  return asRecordArray(result.data) as unknown as FindingRecord[];
-}
-
 async function saveFinding(
   client: MonitoringClient,
   run: RunRecord,
@@ -408,103 +472,68 @@ async function saveFinding(
   candidate: Candidate,
   evaluation: EvaluationData | null,
   sourceWasBaselined: boolean,
-  existingFindings: FindingRecord[],
   leaseOwner: string,
-  now: Date,
+  deadlineAt: number,
 ): Promise<SavedFinding> {
-  await assertClaimedRun(client, run.id, leaseOwner, now);
+  assertRunDeadline(deadlineAt);
   const fingerprint = candidateKey(candidate);
   const eventKey = evaluation?.event_key ?? null;
-  const existingByFingerprint = existingFindings.find(
-    (finding) => finding.fingerprint === fingerprint,
-  );
-  const existing = existingByFingerprint;
-  const firstSeenDuringBaseline = existing?.first_seen_during_baseline ?? !sourceWasBaselined;
   const relevant = evaluation?.relevant ?? false;
   const importanceScore = evaluation?.importance_score ?? 0;
-  const eligible =
-    !firstSeenDuringBaseline &&
-    relevant &&
-    importanceScore >= radar.rules.importanceThreshold;
-  const values = {
-    radar_id: radar.id,
-    first_run_id: existing ? undefined : run.id,
-    source_type: candidate.sourceType,
-    source_domain: candidate.sourceDomain,
-    source_url: candidate.sourceUrl,
-    canonical_url: candidate.sourceUrl,
-    fingerprint,
-    event_key: eventKey,
-    title: candidate.title,
-    summary: candidate.excerpt,
-    published_at: candidate.publishedAt,
-    last_seen_at: new Date().toISOString(),
-    relevance_score: evaluation?.relevance_score ?? 0,
-    importance_score: importanceScore,
-    match_reason: evaluation?.reason ?? "evaluation_failed",
-    notification_eligible: existing?.notification_eligible || eligible,
-    first_seen_during_baseline: firstSeenDuringBaseline,
-  };
+  const result = await client.rpc("persist_run_finding", {
+    p_run_id: run.id,
+    p_lease_owner: leaseOwner,
+    p_source_type: candidate.sourceType,
+    p_source_domain: candidate.sourceDomain,
+    p_source_url: candidate.sourceUrl,
+    p_title: candidate.title,
+    p_summary: candidate.excerpt,
+    p_published_at: candidate.publishedAt,
+    p_fingerprint: fingerprint,
+    p_event_key: eventKey,
+    p_source_was_baselined: sourceWasBaselined,
+    p_relevant: relevant,
+    p_relevance_score: evaluation?.relevance_score ?? 0,
+    p_confidence: evaluation?.confidence ?? 0,
+    p_importance_score: importanceScore,
+    p_match_reason: evaluation?.reason ?? "evaluation_failed",
+  });
+  throwRunRpcError(result.error);
 
-  let finding: FindingRecord;
-
-  if (existing) {
-    const updateResult = await client
-      .from("findings")
-      .update({
-        last_seen_at: values.last_seen_at,
-        event_key: existing.event_key ?? values.event_key,
-        relevance_score: values.relevance_score,
-        importance_score: values.importance_score,
-        match_reason: values.match_reason,
-        notification_eligible: values.notification_eligible,
-      })
-      .eq("id", existing.id)
-      .select(
-        "id,radar_id,fingerprint,event_key,importance_score,first_seen_during_baseline,notification_eligible",
-      )
-      .single();
-    throwDatabaseError(updateResult.error);
-    if (!updateResult.data) {
-      throw new MonitoringError("DATABASE_ERROR", "Finding update returned no row.");
-    }
-    finding = updateResult.data as FindingRecord;
-  } else {
-    const insertResult = await client
-      .from("findings")
-      .insert(values)
-      .select(
-        "id,radar_id,fingerprint,event_key,importance_score,first_seen_during_baseline,notification_eligible",
-      )
-      .single();
-    throwDatabaseError(insertResult.error);
-    if (!insertResult.data) {
-      throw new MonitoringError("DATABASE_ERROR", "Finding insert returned no row.");
-    }
-    finding = insertResult.data as FindingRecord;
+  const row = firstRpcRow<{
+    finding_id: string;
+    radar_id: string;
+    fingerprint: string;
+    event_key: string | null;
+    importance_score: number;
+    first_seen_during_baseline: boolean;
+    notification_eligible: boolean;
+  }>(result.data);
+  if (!row?.finding_id) {
+    throw new MonitoringError(
+      "DATABASE_ERROR",
+      "Finding persistence returned no row.",
+    );
   }
 
-  await assertClaimedRun(client, run.id, leaseOwner, now);
-  const runFindingResult = await client
-    .from("run_findings")
-    .upsert(
-      {
-        run_id: run.id,
-        finding_id: finding.id,
-        relevant,
-        relevance_score: evaluation?.relevance_score ?? 0,
-        confidence: evaluation?.confidence ?? 0,
-        importance_score: importanceScore,
-        decision: evaluation ? (relevant ? "relevant" : "not_relevant") : "evaluation_failed",
-        explanation: evaluation?.reason ?? "evaluation_failed",
-      },
-      { onConflict: "run_id,finding_id" },
-    );
-  throwDatabaseError(runFindingResult.error);
+  const finding: FindingRecord = {
+    id: row.finding_id,
+    radar_id: row.radar_id,
+    fingerprint: row.fingerprint,
+    event_key: row.event_key,
+    importance_score: row.importance_score,
+    first_seen_during_baseline: row.first_seen_during_baseline,
+    notification_eligible: row.notification_eligible,
+  };
 
   return {
     finding,
-    eligible: Boolean(finding.notification_eligible && eligible),
+    eligible: Boolean(
+      finding.notification_eligible &&
+        !finding.first_seen_during_baseline &&
+        relevant &&
+        importanceScore >= radar.rules.importanceThreshold,
+    ),
     evaluation,
   };
 }
@@ -516,43 +545,33 @@ async function markSourceBaselineComplete(
   successfulSources: Set<"tavily" | "rss">,
   leaseOwner: string,
   now: Date,
+  deadlineAt: number,
 ): Promise<void> {
   if (successfulSources.has("tavily")) {
-    await assertClaimedRun(client, run.id, leaseOwner, now);
-    const result = await client
-      .from("radars")
-      .update({
-        tavily_baseline_completed_at: radar.tavily_baseline_completed_at ?? now.toISOString(),
-      })
-      .eq("id", radar.id)
-      .eq("lease_owner", leaseOwner)
-      .select("id")
-      .maybeSingle();
-    throwDatabaseError(result.error);
-    if (!result.data) {
+    assertRunDeadline(deadlineAt);
+    const result = await client.rpc("mark_source_baseline_for_run", {
+      p_run_id: run.id,
+      p_lease_owner: leaseOwner,
+      p_source_key: "tavily",
+      p_completed_at: radar.tavily_baseline_completed_at ?? now.toISOString(),
+    });
+    throwRunRpcError(result.error);
+    if (!rpcReturnedTrue(result.data)) {
       throw new MonitoringError("RUN_NOT_CLAIMED", "Run is no longer claimed.");
     }
   }
 
   if (successfulSources.has("rss")) {
-    await assertClaimedRun(client, run.id, leaseOwner, now);
-    const result = await client
-      .from("radar_sources")
-      .update({
-        baseline_completed_at: now.toISOString(),
-        last_error: null,
-        updated_at: now.toISOString(),
-      })
-      .eq("radar_id", radar.id)
-      .eq("source_key", "music_news_rss")
-      .select("radar_id")
-      .maybeSingle();
-
-    if (result.error?.code !== "42P01") {
-      throwDatabaseError(result.error);
-      if (!result.data) {
-        throw new MonitoringError("RUN_NOT_CLAIMED", "Run is no longer claimed.");
-      }
+    assertRunDeadline(deadlineAt);
+    const result = await client.rpc("mark_source_baseline_for_run", {
+      p_run_id: run.id,
+      p_lease_owner: leaseOwner,
+      p_source_key: "music_news_rss",
+      p_completed_at: now.toISOString(),
+    });
+    throwRunRpcError(result.error);
+    if (!rpcReturnedTrue(result.data)) {
+      throw new MonitoringError("RUN_NOT_CLAIMED", "Run is no longer claimed.");
     }
   }
 }
@@ -609,6 +628,7 @@ async function finalizeRun(
       .eq("id", run.id)
       .eq("status", "running")
       .eq("lease_owner", leaseOwner)
+      .gt("lease_expires_at", new Date().toISOString())
       .select("id")
       .maybeSingle();
     throwDatabaseError(runUpdate.error);
@@ -632,6 +652,7 @@ async function finalizeRun(
       })
       .eq("id", radar.id)
       .eq("lease_owner", leaseOwner)
+      .gt("lease_expires_at", new Date().toISOString())
       .select("id")
       .maybeSingle();
     throwDatabaseError(radarUpdate.error);
@@ -807,11 +828,16 @@ export async function executeClaimedRun(
   const db = getMonitoringClient(dependencies.client);
   const runStartedAt = dependencies.now?.() ?? new Date();
   const run = await readRun(db, runId, leaseOwner, runStartedAt);
+  const deadlineAt = Date.parse(run.lease_expires_at!);
   let radar: PipelineRadar | undefined;
 
   try {
-    radar = await readRadar(db, run.radar_id);
-    const sourceRow = await readSourceRow(db, radar.id);
+    assertRunDeadline(deadlineAt);
+    radar = await withRunDeadline(readRadar(db, run.radar_id), deadlineAt);
+    const sourceRow = await withRunDeadline(
+      readSourceRow(db, radar.id),
+      deadlineAt,
+    );
     const sourceOutcomes: SourceOutcome[] = [];
     const internalErrors: Array<Record<string, string>> = [];
     const currentTime = () => dependencies.now?.() ?? new Date();
@@ -822,28 +848,35 @@ export async function executeClaimedRun(
     let sourcePersistence = Promise.resolve();
     const persistOutcomes = (snapshot: SourceOutcome[]) => {
       sourcePersistence = sourcePersistence.then(() =>
-        persistSourceOutcomes(db, run.id, leaseOwner, snapshot),
+        withRunDeadline(
+          persistSourceOutcomes(db, run.id, leaseOwner, snapshot),
+          deadlineAt,
+        ),
       );
       return sourcePersistence;
     };
 
-    const [tavilyCandidates, rssCandidates] = await Promise.all([
-      fetchSource(
-        "tavily",
-        tavilyFetcher,
-        persistOutcomes,
-        sourceOutcomes,
-        internalErrors,
-      ),
-      fetchSource(
-        "rss",
-        rssFetcher,
-        persistOutcomes,
-        sourceOutcomes,
-        internalErrors,
-      ),
-    ]);
-    await sourcePersistence;
+    const [tavilyCandidates, rssCandidates] = await withRunDeadline(
+      Promise.all([
+        fetchSource(
+          "tavily",
+          tavilyFetcher,
+          persistOutcomes,
+          sourceOutcomes,
+          internalErrors,
+        ),
+        fetchSource(
+          "rss",
+          rssFetcher,
+          persistOutcomes,
+          sourceOutcomes,
+          internalErrors,
+        ),
+      ]),
+      deadlineAt,
+    );
+    await withRunDeadline(sourcePersistence, deadlineAt);
+    assertRunDeadline(deadlineAt);
     const candidates = [...tavilyCandidates, ...rssCandidates];
     const uniqueCandidates = Array.from(
       new Map(candidates.map((candidate) => [candidateKey(candidate), candidate])).values(),
@@ -855,22 +888,25 @@ export async function executeClaimedRun(
     let evaluations: CandidateEvaluation[] = [];
     let aiFailed = false;
 
-    await assertClaimedRun(db, run.id, leaseOwner, currentTime());
+    assertRunDeadline(deadlineAt);
     if (uniqueCandidates.length > 0) {
       try {
         const evaluate =
           dependencies.evaluate ??
           ((input: { rules: RadarRules; candidates: Candidate[] }) =>
             evaluateCandidates(input));
-        evaluations = await withTimeout(
+        evaluations = await withAiTimeout(
           evaluate({
             rules: radar.rules,
             candidates: uniqueCandidates.slice(0, 8),
           }),
-          Math.max(1, dependencies.aiTimeoutMs ?? DEFAULT_AI_TIMEOUT_MS),
-          new MonitoringError("AI_TIMEOUT", "AI evaluation exceeded its time budget."),
+          deadlineAt,
+          dependencies.aiTimeoutMs ?? DEFAULT_AI_TIMEOUT_MS,
         );
       } catch (error) {
+        if (errorCode(error) === "RUN_DEADLINE_EXCEEDED") {
+          throw error;
+        }
         aiFailed = true;
         internalErrors.push({
           source: "ai",
@@ -879,9 +915,8 @@ export async function executeClaimedRun(
       }
     }
 
-    await assertClaimedRun(db, run.id, leaseOwner, currentTime());
+    assertRunDeadline(deadlineAt);
     const evaluationMap = buildEvaluationMap(evaluations);
-    const existingFindings = await readExistingFindings(db, radar.id);
     const savedFindings: SavedFinding[] = [];
     const successfulSources = new Set<"tavily" | "rss">(
       sourceOutcomes
@@ -890,35 +925,44 @@ export async function executeClaimedRun(
     );
 
     for (const candidate of uniqueCandidates) {
+      assertRunDeadline(deadlineAt);
       const sourceKey: keyof SourceBaselineState =
         candidate.sourceType === "tavily" ? "tavily" : "music_news_rss";
-      const saved = await saveFinding(
-        db,
-        run,
-        radar,
-        candidate,
-        evaluationMap.get(candidateKey(candidate)) ?? null,
-        sourceBaselineState[sourceKey],
-        existingFindings,
-        leaseOwner,
-        currentTime(),
+      const saved = await withRunDeadline(
+        saveFinding(
+          db,
+          run,
+          radar,
+          candidate,
+          evaluationMap.get(candidateKey(candidate)) ?? null,
+          sourceBaselineState[sourceKey],
+          leaseOwner,
+          deadlineAt,
+        ),
+        deadlineAt,
       );
-      existingFindings.push(saved.finding);
       savedFindings.push(saved);
     }
 
-    await markSourceBaselineComplete(
-      db,
-      run,
-      radar,
-      successfulSources,
-      leaseOwner,
-      currentTime(),
+    await withRunDeadline(
+      markSourceBaselineComplete(
+        db,
+        run,
+        radar,
+        successfulSources,
+        leaseOwner,
+        currentTime(),
+        deadlineAt,
+      ),
+      deadlineAt,
     );
 
     let telegramFailed = false;
     let notificationCount = 0;
-    const destinationId = await readTelegramDestination(db, radar.user_id);
+    const destinationId = await withRunDeadline(
+      readTelegramDestination(db, radar.user_id),
+      deadlineAt,
+    );
     const notificationFindings = new Map<string, SavedFinding>();
     for (const saved of savedFindings.filter((item) => item.eligible && !aiFailed)) {
       const key = saved.finding.event_key?.trim() || saved.finding.fingerprint;
@@ -932,25 +976,53 @@ export async function executeClaimedRun(
     }
 
     if (destinationId) {
-      const createNotification =
-        dependencies.createNotification ?? defaultCreatePendingNotification;
+      const createNotification = dependencies.createNotification ??
+        ((findingId: string, destination: string, client?: MonitoringClient) =>
+          defaultCreatePendingNotificationForRun(
+            findingId,
+            destination,
+            { runId: run.id, leaseOwner },
+            client,
+          ));
       const sendNotification =
         dependencies.sendNotification ?? defaultSendPendingNotification;
 
-      for (const saved of notificationFindings.values()) {
-        await assertClaimedRun(db, run.id, leaseOwner, currentTime());
-        const notification = await createNotification(
-          saved.finding.id,
-          destinationId,
-          db,
-        );
-        if (notification.status !== "pending") {
-          continue;
-        }
+      const notificationResults = await withRunDeadline(
+        Promise.all(
+          [...notificationFindings.values()].map(async (saved) => {
+            assertRunDeadline(deadlineAt);
+            const notification = await withRunDeadline(
+              createNotification(
+                saved.finding.id,
+                destinationId,
+                db,
+                { runId: run.id, leaseOwner },
+              ),
+              deadlineAt,
+            );
+            if (notification.status !== "pending") {
+              return null;
+            }
 
-        await assertClaimedRun(db, run.id, leaseOwner, currentTime());
-        const sendResult = await sendNotification(notification.id, { client: db });
-        await assertClaimedRun(db, run.id, leaseOwner, currentTime());
+            const sendResult = await withRunDeadline(
+              sendNotification(notification.id, {
+                client: db,
+                runId: run.id,
+                leaseOwner,
+                deadlineAt,
+              }),
+              deadlineAt,
+            );
+            if (sendResult?.errorCode === "RUN_DEADLINE_EXCEEDED") {
+              throw runDeadlineError();
+            }
+            return sendResult;
+          }),
+        ),
+        deadlineAt,
+      );
+
+      for (const sendResult of notificationResults) {
         if (sendResult?.status === "sent") {
           notificationCount += 1;
         }
@@ -968,20 +1040,24 @@ export async function executeClaimedRun(
     }
 
     const status = resolveRunStatus(sourceOutcomes, { aiFailed, telegramFailed });
-    return finalizeRun(
-      db,
-      run,
-      radar,
-      leaseOwner,
-      {
-        status,
-        candidateCount: candidates.length,
-        relevantCount: savedFindings.filter((item) => item.evaluation?.relevant).length,
-        notificationCount,
-        sourceOutcomes,
-        internalErrors,
-      },
-      currentTime(),
+    assertRunDeadline(deadlineAt);
+    return await withRunDeadline(
+      finalizeRun(
+        db,
+        run,
+        radar,
+        leaseOwner,
+        {
+          status,
+          candidateCount: candidates.length,
+          relevantCount: savedFindings.filter((item) => item.evaluation?.relevant).length,
+          notificationCount,
+          sourceOutcomes,
+          internalErrors,
+        },
+        currentTime(),
+      ),
+      deadlineAt,
     );
   } catch (error) {
     await recoverClaimedRun(
