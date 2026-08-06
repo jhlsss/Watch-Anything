@@ -4,10 +4,14 @@ import { type NextRequest, NextResponse } from "next/server";
 import { parsePublicEnv } from "@/lib/env";
 
 function isProtectedPath(pathname: string) {
-  return (
-    pathname === "/dashboard" ||
-    pathname.startsWith("/radars") ||
-    pathname === "/connect-telegram"
+  const protectedPathPrefixes = [
+    "/dashboard",
+    "/radars",
+    "/connect-telegram",
+  ];
+
+  return protectedPathPrefixes.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
   );
 }
 
