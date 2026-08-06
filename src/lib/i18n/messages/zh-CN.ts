@@ -107,7 +107,7 @@ const zhCN = {
     eyebrow: "Watch Anything 账号",
     title: "登录你的工作区",
     description: "登录后可以恢复刚刚确认的规则。如果还没有账号，也可以在同一个表单里创建。",
-    returnNote: "提交表单后会进入 Telegram 设置页面；这里不会调用认证服务。",
+    returnNote: "提交表单后会进入 Telegram 设置页面。",
     login: "登录",
     signup: "创建账号",
     fullName: "姓名",

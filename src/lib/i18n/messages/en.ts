@@ -110,7 +110,7 @@ const en = {
     title: "Log in to your workspace",
     description:
       "Your confirmed rules can be restored after you log in. New here? Create an account in the same form.",
-    returnNote: "Submit the form to continue to the Telegram setup screen in this UI shell.",
+    returnNote: "Submit the form to continue to the Telegram setup screen.",
     login: "Log in",
     signup: "Create account",
     fullName: "Full name",
