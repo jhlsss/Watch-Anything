@@ -50,13 +50,13 @@ describe("monitoring migration contract", () => {
       /create unique index if not exists pending_radar_setups_pending_user_rule_token_hash_idx.*where status = 'pending' and rule_token_hash is not null/,
     );
     expect(migration).toMatch(
-      /for stale_run in select .* from public\.radar_runs .*status = 'running'.*lease_expires_at <= now\(\).*for update/,
+      /for stale_run in select .* from public\.radar_runs .*status = 'running'.*lease_expires_at <= clock_timestamp\(\).*for update/,
     );
     expect(migration).toMatch(
       /recovered_status := case .*source_success_count.*source_outcomes/,
     );
     expect(migration).toMatch(
-      /update public\.radar_runs .*status = recovered_status.*finished_at = timezone\('utc', now\(\)\).*lease_owner = null.*lease_expires_at = null/,
+      /update public\.radar_runs .*status = recovered_status.*finished_at = timezone\('utc', clock_timestamp\(\)\).*lease_owner = null.*lease_expires_at = null/,
     );
     expect(migration).toMatch(
       /where id = stale_run\.id.*status = 'running'.*lease_owner is not distinct from stale_run\.lease_owner/,
@@ -80,6 +80,39 @@ describe("monitoring migration contract", () => {
       /create or replace function public\.mark_source_baseline_for_run\(.*p_run_id uuid.*p_lease_owner uuid/,
     );
 
+    const claimFunctionStart = migration.indexOf(
+      "create or replace function public.claim_radar_run",
+    );
+    const claimFunctionBody = migration.slice(
+      claimFunctionStart,
+      migration.indexOf("$$;", claimFunctionStart),
+    );
+    expect(claimFunctionBody).toContain("clock_timestamp()");
+    expect(claimFunctionBody).not.toMatch(
+      /lease_expires_at\s*(?:<=|>)\s*now\(\)/,
+    );
+    expect(claimFunctionBody).toContain(
+      "p_lease_expires_at > clock_timestamp()",
+    );
+    expect(claimFunctionBody).toMatch(
+      /if claimed_radar_id is null then[\s\S]*if p_lease_expires_at <= clock_timestamp\(\) then[\s\S]*'invalid_run_lease'/u,
+    );
+    for (const functionName of [
+      "persist_run_source_outcomes",
+      "finalize_run_for_owner",
+      "recover_run_for_owner",
+    ]) {
+      expect(migration).toContain(
+        `create or replace function public.${functionName}`,
+      );
+      expect(migration).toMatch(
+        new RegExp(`revoke all on function public\\.${functionName}\\(`),
+      );
+      expect(migration).toMatch(
+        new RegExp(`grant execute on function public\\.${functionName}\\(`),
+      );
+    }
+
     for (const functionName of [
       "persist_run_finding",
       "create_pending_notification_for_run",
@@ -100,6 +133,10 @@ describe("monitoring migration contract", () => {
       resolve(process.cwd(), "src/app/api/radars/[id]/route.ts"),
       "utf8",
     );
+    const publicDtoSource = readFileSync(
+      resolve(process.cwd(), "src/lib/monitoring/create-radar.ts"),
+      "utf8",
+    );
     expect(detailRoute).toContain("const radarDetailColumns");
     expect(detailRoute).toContain("const runDetailColumns");
     expect(detailRoute).toContain("select(runDetailColumns)");
@@ -117,14 +154,37 @@ describe("monitoring migration contract", () => {
     ]) {
       expect(detailGetRoute).not.toContain(internalField);
     }
+    const findingColumns = detailRoute.slice(
+      detailRoute.indexOf("const findingDetailColumns"),
+      detailRoute.indexOf("const runDetailColumns"),
+    );
+    const findingDto = publicDtoSource.slice(
+      publicDtoSource.indexOf("export function toPublicFinding"),
+      publicDtoSource.indexOf("export function toPublicRun"),
+    );
+    for (const internalFindingField of [
+      "first_run_id",
+      "fingerprint",
+      "event_key",
+      "notification_eligible",
+    ]) {
+      expect(findingColumns).not.toContain(internalFindingField);
+      expect(findingDto).not.toContain(internalFindingField);
+    }
 
     const createRouteOrder = readFileSync(
       resolve(process.cwd(), "src/app/api/radars/route.ts"),
       "utf8",
     );
+    expect(createRouteOrder).toMatch(
+      /result\.data\.map\(\(row\) =>[\s\S]*toPublicRadar\(row/u,
+    );
+    expect(createRouteOrder).toContain("let createdRadar");
+    expect(createRouteOrder).toContain("baselineError");
+    expect(createRouteOrder).toContain("toPublicRadar(createdRadar");
     expect(createRouteOrder.indexOf('cookieStore.delete("wa_setup")')).toBeGreaterThan(-1);
     expect(createRouteOrder.indexOf('cookieStore.delete("wa_setup")')).toBeLessThan(
-      createRouteOrder.indexOf('runRadar(radar.id, "baseline"'),
+      createRouteOrder.indexOf('runRadar(createdRadar.id, "baseline"'),
     );
 
     const runRadarSource = readFileSync(
@@ -134,6 +194,9 @@ describe("monitoring migration contract", () => {
     expect(runRadarSource).toContain("aiTimeoutMs");
     expect(runRadarSource).toContain("Promise.race");
     expect(runRadarSource).toContain('rpc("persist_run_finding"');
+    expect(runRadarSource).toContain('rpc("persist_run_source_outcomes"');
+    expect(runRadarSource).toContain('rpc("finalize_run_for_owner"');
+    expect(runRadarSource).toContain('rpc("recover_run_for_owner"');
     expect(runRadarSource).toContain("lease_expires_at");
     expect(runRadarSource).toContain("deadlineAt");
     expect(runRadarSource).toContain("AbortController");

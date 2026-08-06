@@ -89,6 +89,7 @@ type PendingNotificationSender = (
     runId?: string;
     leaseOwner?: string;
     deadlineAt?: number;
+    cleanupDeadlineAt?: number;
   },
 ) => Promise<NotificationSendResult | null>;
 
@@ -147,18 +148,30 @@ function withRunDeadline<T>(
   deadlineAt: number,
   timeoutError = runDeadlineError(),
 ): Promise<T> {
+  const controller = new AbortController();
+  const abortablePromise = promise as PromiseLike<T> & {
+    abortSignal?: (signal: AbortSignal) => PromiseLike<T>;
+  };
+  const observedRequest =
+    typeof abortablePromise.abortSignal === "function"
+      ? abortablePromise.abortSignal(controller.signal)
+      : promise;
   const remainingMs = deadlineAt - Date.now();
   if (remainingMs <= 0) {
+    controller.abort();
     return Promise.reject(timeoutError);
   }
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   // Promise.race observes the underlying operation, but only the winner can
   // advance this pipeline; late provider results cannot change run state.
-  const observedPromise = Promise.resolve(promise);
+  const observedPromise = Promise.resolve(observedRequest);
   const timeoutPromise = new Promise<T>((_, reject) => {
     timeoutId = setTimeout(
-      () => reject(timeoutError),
+      () => {
+        controller.abort();
+        reject(timeoutError);
+      },
       Math.min(remainingMs, MAX_TIMER_MS),
     );
   });
@@ -200,6 +213,7 @@ type GroqRequestOptions = {
 };
 
 type GroqCreateWithOptions = (
+  this: GroqLike["chat"]["completions"],
   request: Record<string, unknown>,
   options: GroqRequestOptions,
 ) => Promise<Awaited<ReturnType<GroqLike["chat"]["completions"]["create"]>>>;
@@ -215,7 +229,7 @@ function createDeadlineGroq(
     chat: {
       completions: {
         create: (request) =>
-          create(request, {
+          create.call(groq.chat.completions, request, {
             signal: controller.signal,
             timeout: Math.max(1, deadlineAt - Date.now()),
             maxRetries: 0,
@@ -537,20 +551,13 @@ async function persistSourceOutcomes(
   leaseOwner: string,
   outcomes: SourceOutcome[],
 ): Promise<void> {
-  const result = await client
-    .from("radar_runs")
-    .update({
-      source_outcomes: outcomes,
-      source_success_count: outcomes.filter((outcome) => outcome.success).length,
-    })
-    .eq("id", runId)
-    .eq("status", "running")
-    .eq("lease_owner", leaseOwner)
-    .gt("lease_expires_at", new Date().toISOString())
-    .select("id")
-    .maybeSingle();
+  const result = await client.rpc("persist_run_source_outcomes", {
+    p_run_id: runId,
+    p_lease_owner: leaseOwner,
+    p_source_outcomes: outcomes,
+  });
   throwDatabaseError(result.error);
-  if (!result.data) {
+  if (!rpcReturnedTrue(result.data)) {
     throw new MonitoringError("RUN_NOT_CLAIMED", "Run is no longer claimed.");
   }
 }
@@ -736,7 +743,6 @@ async function readTelegramDestination(
 async function finalizeRun(
   client: MonitoringClient,
   run: RunRecord,
-  radar: PipelineRadar,
   leaseOwner: string,
   result: {
     status: "success" | "failed";
@@ -746,57 +752,21 @@ async function finalizeRun(
     sourceOutcomes: SourceOutcome[];
     internalErrors: Array<Record<string, string>>;
   },
-  now: Date,
   deadlineAt: number,
 ): Promise<RunResult> {
-  const finishedAt = now.toISOString();
   await retryTerminalWrite(async () => {
-    const runUpdate = await client
-      .from("radar_runs")
-      .update({
-        status: result.status,
-        finished_at: finishedAt,
-        candidate_count: result.candidateCount,
-        relevant_count: result.relevantCount,
-        notification_count: result.notificationCount,
-        source_outcomes: result.sourceOutcomes,
-        source_success_count: result.sourceOutcomes.filter((outcome) => outcome.success).length,
-        internal_errors: result.internalErrors,
-        lease_owner: null,
-        lease_expires_at: null,
-      })
-      .eq("id", run.id)
-      .eq("status", "running")
-      .eq("lease_owner", leaseOwner)
-      .gt("lease_expires_at", new Date().toISOString())
-      .select("id")
-      .maybeSingle();
-    throwDatabaseError(runUpdate.error);
-    if (!runUpdate.data) {
-      throw new MonitoringError("RUN_NOT_CLAIMED", "Run is no longer claimed.");
-    }
-  }, deadlineAt);
-
-  const nextCheckAt = new Date(
-    now.getTime() +
-      (result.status === "failed" ? 15 * 60_000 : radar.interval_minutes * 60_000),
-  ).toISOString();
-  await retryTerminalWrite(async () => {
-    const radarUpdate = await client
-      .from("radars")
-      .update({
-        last_checked_at: finishedAt,
-        next_check_at: nextCheckAt,
-        lease_owner: null,
-        lease_expires_at: null,
-      })
-      .eq("id", radar.id)
-      .eq("lease_owner", leaseOwner)
-      .gt("lease_expires_at", new Date().toISOString())
-      .select("id")
-      .maybeSingle();
-    throwDatabaseError(radarUpdate.error);
-    if (!radarUpdate.data) {
+    const resultRow = await client.rpc("finalize_run_for_owner", {
+      p_run_id: run.id,
+      p_lease_owner: leaseOwner,
+      p_status: result.status,
+      p_candidate_count: result.candidateCount,
+      p_relevant_count: result.relevantCount,
+      p_notification_count: result.notificationCount,
+      p_source_outcomes: result.sourceOutcomes,
+      p_internal_errors: result.internalErrors,
+    });
+    throwRunRpcError(resultRow.error);
+    if (!rpcReturnedTrue(resultRow.data)) {
       throw new MonitoringError("RUN_NOT_CLAIMED", "Run is no longer claimed.");
     }
   }, deadlineAt);
@@ -810,107 +780,21 @@ async function finalizeRun(
   };
 }
 
-type RecoveryRun = {
-  id: string;
-  radar_id: string;
-  source_outcomes: unknown;
-  source_success_count: unknown;
-};
-
-async function readRecoveryRun(
-  client: MonitoringClient,
-  runId: string,
-  leaseOwner: string,
-): Promise<RecoveryRun> {
-  const result = await client
-    .from("radar_runs")
-    .select("id,radar_id,source_outcomes,source_success_count")
-    .eq("id", runId)
-    .eq("status", "running")
-    .eq("lease_owner", leaseOwner)
-    .maybeSingle();
-  throwDatabaseError(result.error);
-
-  if (!result.data) {
-    throw new MonitoringError("RUN_NOT_CLAIMED", "Run is no longer claimed.");
-  }
-
-  return result.data as RecoveryRun;
-}
-
 async function recoverClaimedRun(
   client: MonitoringClient,
   run: RunRecord,
   leaseOwner: string,
   cause: unknown,
-  now: Date,
-  intervalMinutes = 360,
   cleanupDeadlineAt = Date.now() + RECOVERY_CLEANUP_BUDGET_MS,
 ): Promise<void> {
-  const persistedRun = await withRunDeadline(
-    readRecoveryRun(client, run.id, leaseOwner),
-    cleanupDeadlineAt,
-  );
-  const sourceOutcomes = asSourceOutcomes(persistedRun.source_outcomes);
-  const persistedSuccessCount =
-    typeof persistedRun.source_success_count === "number"
-      ? persistedRun.source_success_count
-      : 0;
-  const status =
-    persistedSuccessCount >= 1 || sourceOutcomes.some((outcome) => outcome.success)
-      ? "success"
-      : "failed";
-  const finishedAt = now.toISOString();
-
   await retryTerminalWrite(async () => {
-    const runUpdate = await client
-      .from("radar_runs")
-      .update({
-        status,
-        finished_at: finishedAt,
-        source_outcomes: sourceOutcomes,
-        source_success_count: Math.max(
-          persistedSuccessCount,
-          sourceOutcomes.filter((outcome) => outcome.success).length,
-        ),
-        internal_errors: [
-          {
-            source: "runtime",
-            errorCode: errorCode(cause, "RUN_RECOVERY_FAILED"),
-          },
-        ],
-        lease_owner: null,
-        lease_expires_at: null,
-      })
-      .eq("id", run.id)
-      .eq("status", "running")
-      .eq("lease_owner", leaseOwner)
-      .select("id")
-      .maybeSingle();
-    throwDatabaseError(runUpdate.error);
-    if (!runUpdate.data) {
-      throw new MonitoringError("RUN_NOT_CLAIMED", "Run is no longer claimed.");
-    }
-  }, cleanupDeadlineAt);
-
-  await retryTerminalWrite(async () => {
-    const radarUpdate = await client
-      .from("radars")
-      .update({
-        last_checked_at: finishedAt,
-        next_check_at: new Date(
-          now.getTime() +
-            (status === "failed" ? 15 * 60_000 : intervalMinutes * 60_000),
-        ).toISOString(),
-        lease_owner: null,
-        lease_expires_at: null,
-      })
-      .eq("id", run.radar_id)
-      .eq("lease_owner", leaseOwner)
-      .select("id")
-      .maybeSingle();
-    throwDatabaseError(radarUpdate.error);
-    if (!radarUpdate.data) {
+    const result = await client.rpc("recover_run_for_owner", {
+      p_run_id: run.id,
+      p_lease_owner: leaseOwner,
+      p_error_code: errorCode(cause, "RUN_RECOVERY_FAILED"),
+    });
+    throwRunRpcError(result.error);
+    if (!rpcReturnedTrue(result.data)) {
       throw new MonitoringError("RUN_NOT_CLAIMED", "Run is no longer claimed.");
     }
   }, cleanupDeadlineAt);
@@ -999,11 +883,6 @@ export async function executeClaimedRun(
   );
   const leaseDeadlineAt = Date.parse(run.lease_expires_at!);
   const deadlineAt = Math.min(outerDeadlineAt, leaseDeadlineAt) - LEASE_SAFETY_MARGIN_MS;
-  const recoveryDeadlineAt = Math.min(
-    outerDeadlineAt,
-    leaseDeadlineAt,
-    Date.now() + RECOVERY_CLEANUP_BUDGET_MS,
-  );
   let radar: PipelineRadar | undefined;
 
   try {
@@ -1168,6 +1047,10 @@ export async function executeClaimedRun(
           ));
       const sendNotification =
         dependencies.sendNotification ?? defaultSendPendingNotification;
+      const notificationCleanupDeadlineAt = Math.min(
+        outerDeadlineAt,
+        leaseDeadlineAt,
+      );
 
       const notificationResults = await withRunDeadline(
         Promise.all(
@@ -1192,8 +1075,9 @@ export async function executeClaimedRun(
                 runId: run.id,
                 leaseOwner,
                 deadlineAt,
+                cleanupDeadlineAt: notificationCleanupDeadlineAt,
               }),
-              deadlineAt,
+              notificationCleanupDeadlineAt,
             );
             if (sendResult?.errorCode === "RUN_DEADLINE_EXCEEDED") {
               throw runDeadlineError();
@@ -1201,7 +1085,7 @@ export async function executeClaimedRun(
             return sendResult;
           }),
         ),
-        deadlineAt,
+        notificationCleanupDeadlineAt,
       );
 
       for (const sendResult of notificationResults) {
@@ -1227,7 +1111,6 @@ export async function executeClaimedRun(
       finalizeRun(
         db,
         run,
-        radar,
         leaseOwner,
         {
           status,
@@ -1237,20 +1120,22 @@ export async function executeClaimedRun(
           sourceOutcomes,
           internalErrors,
         },
-        currentTime(),
         deadlineAt,
       ),
       deadlineAt,
     );
   } catch (error) {
+    const recoveryDeadlineAt = Math.min(
+      outerDeadlineAt,
+      leaseDeadlineAt,
+      Date.now() + RECOVERY_CLEANUP_BUDGET_MS,
+    );
     try {
       await recoverClaimedRun(
         db,
         run,
         leaseOwner,
         error,
-        dependencies.now?.() ?? new Date(),
-        radar?.interval_minutes,
         recoveryDeadlineAt,
       );
     } catch {

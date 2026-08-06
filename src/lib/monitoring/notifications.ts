@@ -59,6 +59,7 @@ type NotificationDependencies = {
   client?: MonitoringClient;
   telegram?: TelegramSender;
   deadlineAt?: number;
+  cleanupDeadlineAt?: number;
 };
 
 const MAX_TIMER_MS = 2_147_000_000;
@@ -252,18 +253,32 @@ function withNotificationDeadline<T>(
     return Promise.resolve(promise);
   }
 
+  const controller = new AbortController();
+  const abortablePromise = promise as PromiseLike<T> & {
+    abortSignal?: (signal: AbortSignal) => PromiseLike<T>;
+  };
+  const observedRequest =
+    typeof abortablePromise.abortSignal === "function"
+      ? abortablePromise.abortSignal(controller.signal)
+      : promise;
   const remainingMs = deadlineAt - Date.now();
   if (remainingMs <= 0) {
+    controller.abort();
+    void Promise.resolve(observedRequest).catch(() => undefined);
     return Promise.reject(runDeadlineError());
   }
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   // Promise.race observes the provider promise, while the timeout winner keeps
-  // the late provider result out of the notification state machine.
-  const observedPromise = Promise.resolve(promise);
+  // the late provider result out of the notification state machine. Supabase's
+  // PostgREST builders expose abortSignal(), so use it when available.
+  const observedPromise = Promise.resolve(observedRequest);
   const timeoutPromise = new Promise<T>((_, reject) => {
     timeoutId = setTimeout(
-      () => reject(runDeadlineError()),
+      () => {
+        controller.abort();
+        reject(runDeadlineError());
+      },
       Math.min(remainingMs, MAX_TIMER_MS),
     );
   });
@@ -325,14 +340,6 @@ async function finishPreparationFailure(
   );
 
   if (!updated) {
-    if (deadlineAt !== undefined && Date.now() >= deadlineAt) {
-      return {
-        notificationId,
-        status,
-        errorCode,
-      };
-    }
-
     throw new MonitoringError(
       "DATABASE_ERROR",
       "Notification status could not be updated after preparation failure.",
@@ -351,6 +358,8 @@ export async function sendPendingNotification(
   dependencies: NotificationDependencies = {},
 ): Promise<NotificationSendResult | null> {
   const db = getMonitoringClient(dependencies.client);
+  const cleanupDeadlineAt =
+    dependencies.cleanupDeadlineAt ?? dependencies.deadlineAt;
   const claimResult = await withNotificationDeadline(
     db.rpc("claim_notification", {
       p_notification_id: notificationId,
@@ -380,11 +389,11 @@ export async function sendPendingNotification(
     return finishPreparationFailure(
       db,
       notificationId,
-      "unknown",
+      "failed",
       error instanceof MonitoringError && error.code === "RUN_DEADLINE_EXCEEDED"
         ? "RUN_DEADLINE_EXCEEDED"
         : "NOTIFICATION_PREPARATION_FAILED",
-      dependencies.deadlineAt,
+      cleanupDeadlineAt,
     );
   }
 
@@ -406,11 +415,11 @@ export async function sendPendingNotification(
     return finishPreparationFailure(
       db,
       notificationId,
-      "unknown",
+      "failed",
       error instanceof MonitoringError && error.code === "RUN_DEADLINE_EXCEEDED"
         ? "RUN_DEADLINE_EXCEEDED"
         : "NOTIFICATION_PREPARATION_FAILED",
-      dependencies.deadlineAt,
+      cleanupDeadlineAt,
     );
   }
 
@@ -418,9 +427,9 @@ export async function sendPendingNotification(
     return finishPreparationFailure(
       db,
       notificationId,
-      "unknown",
+      "failed",
       "NOTIFICATION_PREPARATION_FAILED",
-      dependencies.deadlineAt,
+      cleanupDeadlineAt,
     );
   }
 
@@ -430,7 +439,7 @@ export async function sendPendingNotification(
       notificationId,
       "failed",
       "TELEGRAM_NOT_CONNECTED",
-      dependencies.deadlineAt,
+      cleanupDeadlineAt,
     );
   }
 
@@ -452,7 +461,7 @@ export async function sendPendingNotification(
         sent_at: new Date().toISOString(),
         error_code: null,
       },
-      dependencies.deadlineAt,
+      cleanupDeadlineAt,
     );
 
     if (!updated) {
@@ -463,7 +472,7 @@ export async function sendPendingNotification(
           status: "unknown",
           error_code: "NOTIFICATION_STATUS_UNKNOWN",
         },
-        dependencies.deadlineAt,
+        cleanupDeadlineAt,
       );
       return {
         notificationId,
@@ -495,18 +504,10 @@ export async function sendPendingNotification(
         status,
         error_code: errorCode,
       },
-      dependencies.deadlineAt,
+      cleanupDeadlineAt,
     );
 
     if (!updated) {
-      if (dependencies.deadlineAt !== undefined && Date.now() >= dependencies.deadlineAt) {
-        return {
-          notificationId,
-          status,
-          errorCode,
-        };
-      }
-
       throw new MonitoringError(
         "DATABASE_ERROR",
         "Notification status could not be updated after delivery failure.",

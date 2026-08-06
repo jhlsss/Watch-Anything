@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import Groq from "groq-sdk";
 
 vi.mock("@/lib/supabase/admin", () => ({
   createClient: vi.fn(),
@@ -10,10 +11,15 @@ import {
 } from "@/lib/monitoring/fingerprint";
 import { createPendingNotification, sendPendingNotification } from "@/lib/monitoring/notifications";
 import type {
+  DatabaseResult,
   MonitoringClient,
   MonitoringQuery,
 } from "@/lib/monitoring/create-radar";
-import { executeClaimedRun, runRadar } from "@/lib/monitoring/run-radar";
+import {
+  executeClaimedRun,
+  runRadar,
+  withMonitoringDeadline,
+} from "@/lib/monitoring/run-radar";
 import type { GroqLike } from "@/lib/ai/schemas";
 import type { Candidate, RadarRules } from "@/types/contracts";
 import { resolveRunStatus } from "@/lib/monitoring/run-status";
@@ -90,8 +96,27 @@ function queryFor(
   result: { data: unknown; error: null | { code?: string; message: string } },
   onFilter?: (filters: Record<string, unknown>) => typeof result,
   onOperation?: (operation: string, payload: unknown) => void,
+  delayMs = 0,
 ) {
   const filters: Record<string, unknown> = {};
+  let operationPayload: unknown;
+  let operationNotified = false;
+  const resolveResult = () => {
+    const resolved = onFilter ? onFilter(filters) : result;
+    if (!operationNotified && operationPayload !== undefined) {
+      operationNotified = true;
+      onOperation?.("update", operationPayload);
+    }
+    return resolved;
+  };
+  const resolvePromise = () => {
+    if (delayMs <= 0) {
+      return Promise.resolve(resolveResult());
+    }
+    return new Promise<typeof result>((resolve) => {
+      setTimeout(() => resolve(resolveResult()), delayMs);
+    });
+  };
   const query = {
     select: () => query,
     eq: (column: string, value: unknown) => {
@@ -108,16 +133,16 @@ function queryFor(
     limit: () => query,
     insert: () => query,
     update: (values: unknown) => {
-      onOperation?.("update", values);
+      operationPayload = values;
       return query;
     },
     upsert: () => query,
-    maybeSingle: () => Promise.resolve(onFilter ? onFilter(filters) : result),
-    single: () => Promise.resolve(onFilter ? onFilter(filters) : result),
+    maybeSingle: () => resolvePromise(),
+    single: () => resolvePromise(),
     then: (
       onFulfilled?: (value: typeof result) => unknown,
       onRejected?: (reason: unknown) => unknown,
-    ) => Promise.resolve(onFilter ? onFilter(filters) : result).then(onFulfilled, onRejected),
+    ) => resolvePromise().then(onFulfilled, onRejected),
   };
   return query;
 }
@@ -189,7 +214,34 @@ describe("notification claiming", () => {
     expect(telegram.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("finishes a claimed notification as unknown when finding preparation fails", async () => {
+  it("aborts an abortable notification database request at the deadline", async () => {
+    let abortCount = 0;
+    const request = {
+      abortSignal(signal: AbortSignal) {
+        signal.addEventListener("abort", () => {
+          abortCount += 1;
+        });
+        return request;
+      },
+      then() {
+        return new Promise<never>(() => undefined);
+      },
+    };
+    const client = {
+      from: vi.fn(),
+      rpc: vi.fn().mockReturnValue(request),
+    } as unknown as MonitoringClient;
+
+    await expect(
+      sendPendingNotification("notification-1", {
+        client,
+        deadlineAt: Date.now() + 5,
+      }),
+    ).rejects.toMatchObject({ code: "RUN_DEADLINE_EXCEEDED" });
+    expect(abortCount).toBe(1);
+  });
+
+  it("finishes a claimed notification as failed when finding preparation fails", async () => {
     const updates: Record<string, unknown>[] = [];
     const client = {
       from(table: string) {
@@ -227,9 +279,118 @@ describe("notification claiming", () => {
       telegram: { sendMessage: vi.fn() },
     });
 
-    expect(result).toMatchObject({ status: "unknown" });
+    expect(result).toMatchObject({
+      status: "failed",
+      errorCode: "NOTIFICATION_PREPARATION_FAILED",
+    });
     expect(updates).toEqual([
-      { status: "unknown", error_code: "NOTIFICATION_PREPARATION_FAILED" },
+      { status: "failed", error_code: "NOTIFICATION_PREPARATION_FAILED" },
+    ]);
+  });
+
+  it("does not report a terminal notification status without CAS confirmation", async () => {
+    const client = {
+      from(table: string) {
+        if (table === "findings") {
+          return queryFor({
+            data: null,
+            error: { code: "PGRST500", message: "read failed" },
+          }, undefined, undefined, 10);
+        }
+        if (table === "notifications") {
+          return queryFor({ data: null, error: null });
+        }
+        return queryFor({ data: null, error: null });
+      },
+      rpc: vi.fn().mockResolvedValue({
+        data: [
+          {
+            notification_id: "notification-1",
+            finding_id: "finding-1",
+            radar_id: "radar-1",
+            user_id: "user-1",
+            destination_id: "chat-1",
+          },
+        ],
+        error: null,
+      }),
+    } as unknown as MonitoringClient;
+
+    await expect(
+      sendPendingNotification("notification-1", {
+        client,
+        deadlineAt: Date.now() + 5,
+      }),
+    ).rejects.toMatchObject({ code: "DATABASE_ERROR" });
+  });
+
+  it("uses a bounded cleanup budget to confirm a delivery timeout as unknown", async () => {
+    const updates: Record<string, unknown>[] = [];
+    const client = {
+      from(table: string) {
+        if (table === "findings") {
+          return queryFor({
+            data: {
+              id: "finding-1",
+              radar_id: "radar-1",
+              fingerprint: "fp-1",
+              event_key: null,
+              title: "Finding",
+              summary: "Summary",
+              source_domain: "example.com",
+              source_url: "https://example.com/finding",
+            },
+            error: null,
+          });
+        }
+        if (table === "radars") {
+          return queryFor({
+            data: { id: "radar-1", user_id: "user-1", name: "Radar" },
+            error: null,
+          });
+        }
+        if (table === "telegram_connections") {
+          return queryFor({ data: { chat_id: "chat-1" }, error: null });
+        }
+        if (table === "notifications") {
+          return queryFor(
+            { data: { id: "notification-1" }, error: null },
+            undefined,
+            (_operation, values) => updates.push(values as Record<string, unknown>),
+            10,
+          );
+        }
+        return queryFor({ data: null, error: null });
+      },
+      rpc: vi.fn().mockResolvedValue({
+        data: [
+          {
+            notification_id: "notification-1",
+            finding_id: "finding-1",
+            radar_id: "radar-1",
+            user_id: "user-1",
+            destination_id: "chat-1",
+          },
+        ],
+        error: null,
+      }),
+    } as unknown as MonitoringClient;
+
+    const result = await sendPendingNotification("notification-1", {
+      client,
+      deadlineAt: Date.now() + 20,
+      cleanupDeadlineAt: Date.now() + 200,
+      telegram: {
+        sendMessage: () => new Promise(() => undefined),
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "unknown",
+      errorCode: "RUN_DEADLINE_EXCEEDED",
+    });
+    expect(updates).toEqual([
+      { status: "unknown", error_code: "RUN_DEADLINE_EXCEEDED" },
     ]);
   });
 
@@ -294,7 +455,7 @@ describe("notification claiming", () => {
   });
 
   it.each(["radars", "telegram_connections"] as const)(
-    "finishes as unknown when %s preparation reads fail",
+    "finishes as failed when %s preparation reads fail",
     async (failedTable) => {
       const updates: Record<string, unknown>[] = [];
       const client = {
@@ -355,11 +516,11 @@ describe("notification claiming", () => {
           telegram: { sendMessage: vi.fn() },
         }),
       ).resolves.toMatchObject({
-        status: "unknown",
+        status: "failed",
         errorCode: "NOTIFICATION_PREPARATION_FAILED",
       });
       expect(updates).toEqual([
-        { status: "unknown", error_code: "NOTIFICATION_PREPARATION_FAILED" },
+        { status: "failed", error_code: "NOTIFICATION_PREPARATION_FAILED" },
       ]);
     },
   );
@@ -406,7 +567,7 @@ class MonitoringFakeClient implements MonitoringClient {
   readonly rpcCalls: string[] = [];
   readonly findingInserts: Record<string, unknown>[] = [];
   readonly terminalRunUpdates: Record<string, unknown>[] = [];
-  runStatus: "running" | "success" = "running";
+  runStatus: "running" | "success" | "failed" = "running";
   sourceUpdateRows = true;
   terminalRunUpdateRows = true;
   radarUpdateRows = true;
@@ -559,13 +720,82 @@ class MonitoringFakeClient implements MonitoringClient {
     return query as unknown as MonitoringQuery;
   }
 
-  rpc(functionName: string, args: Record<string, unknown> = {}) {
+  rpc(
+    functionName: string,
+    args: Record<string, unknown> = {},
+  ): Promise<DatabaseResult> {
     this.rpcCalls.push(functionName);
     if (functionName === "claim_radar_run") {
       return Promise.resolve({
         data: [{ run_id: "run-1", lease_owner: "claim-owner", error_code: null }],
         error: null,
       });
+    }
+    if (functionName === "persist_run_source_outcomes") {
+      if (this.sourcePersistenceFailures > 0) {
+        this.sourcePersistenceFailures -= 1;
+        return Promise.resolve({
+          data: null,
+          error: { code: "PGRST500", message: "source write failed" },
+        });
+      }
+      return Promise.resolve({
+        data: this.sourceUpdateRows ? [true] : [],
+        error: null,
+      });
+    }
+    if (functionName === "finalize_run_for_owner") {
+      const finalize = () => {
+        const update = {
+          status: args.p_status,
+          lease_owner: null,
+          lease_expires_at: null,
+        };
+        this.terminalRunUpdates.push(update);
+        if (this.terminalUpdateFailures > 0) {
+          this.terminalUpdateFailures -= 1;
+          return {
+            data: null,
+            error: { code: "PGRST500", message: "temporary write failure" },
+          };
+        }
+        if (
+          !this.terminalRunUpdateRows ||
+          !this.radarUpdateRows ||
+          this.runStatus !== "running"
+        ) {
+          return { data: [], error: null };
+        }
+        this.runStatus = args.p_status === "success" ? "success" : "failed";
+        return { data: [true], error: null };
+      };
+      if (this.terminalUpdateDelayMs > 0) {
+        return new Promise((resolve) => {
+          setTimeout(() => resolve(finalize()), this.terminalUpdateDelayMs);
+        });
+      }
+      return Promise.resolve(finalize());
+    }
+    if (functionName === "recover_run_for_owner") {
+      const recover = () => {
+        const update = {
+          status: "failed",
+          lease_owner: null,
+          lease_expires_at: null,
+        };
+        this.terminalRunUpdates.push(update);
+        if (!this.radarUpdateRows || this.runStatus !== "running") {
+          return { data: [], error: null };
+        }
+        this.runStatus = "failed";
+        return { data: [true], error: null };
+      };
+      if (this.terminalUpdateDelayMs > 0) {
+        return new Promise((resolve) => {
+          setTimeout(() => resolve(recover()), this.terminalUpdateDelayMs);
+        });
+      }
+      return Promise.resolve(recover());
     }
     if (functionName === "persist_run_finding") {
       if (this.persistFindingRpcError) {
@@ -626,8 +856,11 @@ describe("run pipeline", () => {
     expect(result.status).toBe("success");
     expect(client.rpcCalls).toEqual([
       "claim_radar_run",
+      "persist_run_source_outcomes",
+      "persist_run_source_outcomes",
       "mark_source_baseline_for_run",
       "mark_source_baseline_for_run",
+      "finalize_run_for_owner",
     ]);
   });
 
@@ -899,6 +1132,167 @@ describe("run pipeline", () => {
     expect(requestOptions[0]?.signal.aborted).toBe(true);
   });
 
+  it("preserves the Groq completions receiver and sends evaluated findings", async () => {
+    const client = new MonitoringFakeClient();
+    client.tavilyBaselineCompletedAt = "2026-08-05T00:00:00.000Z";
+    const createNotification = vi.fn().mockResolvedValue({
+      id: "notification-1",
+      status: "pending",
+    });
+    const sendNotification = vi.fn().mockResolvedValue({
+      notificationId: "notification-1",
+      status: "sent",
+      messageId: 1,
+    });
+    type Receiver = {
+      requestCount: number;
+      create: (
+        this: Receiver,
+        request: Record<string, unknown>,
+        options: Record<string, unknown>,
+      ) => Promise<unknown>;
+    };
+    const completions: Receiver = {
+      requestCount: 0,
+      async create(this: Receiver) {
+        this.requestCount += 1;
+        return {
+          choices: [
+            {
+              message: {
+                content: JSON.stringify([
+                  {
+                    relevant: true,
+                    relevance_score: 90,
+                    importance_score: 90,
+                    confidence: 0.9,
+                    event_key: "receiver-event",
+                    duplicate_of_event_key: null,
+                    reason: "matches",
+                  },
+                ]),
+              },
+            },
+          ],
+        };
+      },
+    };
+    const groq = {
+      chat: { completions },
+    } as unknown as GroqLike;
+
+    for (const [name, value] of Object.entries({
+      SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+      CRON_SECRET: "cron-secret",
+      RULE_TOKEN_SECRET: "r".repeat(32),
+      TAVILY_API_KEY: "tavily-key",
+      GROQ_API_KEY: "groq-key",
+      GROQ_MODEL: "test-model",
+      TELEGRAM_BOT_TOKEN: "telegram-token",
+      TELEGRAM_BOT_USERNAME: "telegram-user",
+      TELEGRAM_WEBHOOK_SECRET: "telegram-secret",
+    })) {
+      vi.stubEnv(name, value);
+    }
+
+    try {
+      await expect(
+        runRadar("radar-1", "baseline", {
+          client,
+          groq,
+          searchTavily: async () => [testCandidate],
+          fetchRss: async () => [],
+          createNotification,
+          sendNotification,
+        }),
+      ).resolves.toMatchObject({ status: "success", notificationCount: 1 });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    expect(completions.requestCount).toBe(1);
+    expect(createNotification).toHaveBeenCalledTimes(1);
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the real Groq SDK receiver with one fake-fetch request", async () => {
+    const client = new MonitoringFakeClient();
+    client.tavilyBaselineCompletedAt = "2026-08-05T00:00:00.000Z";
+    const createNotification = vi.fn().mockResolvedValue({
+      id: "notification-1",
+      status: "pending",
+    });
+    const sendNotification = vi.fn().mockResolvedValue({
+      notificationId: "notification-1",
+      status: "sent",
+      messageId: 1,
+    });
+    const requestInits: RequestInit[] = [];
+    const fakeFetch = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        requestInits.push(init ?? {});
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify([
+                    {
+                      relevant: true,
+                      relevance_score: 90,
+                      importance_score: 90,
+                      confidence: 0.9,
+                      event_key: "real-sdk-event",
+                      duplicate_of_event_key: null,
+                      reason: "matches",
+                    },
+                  ]),
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    );
+
+    for (const [name, value] of Object.entries({
+      SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+      CRON_SECRET: "cron-secret",
+      RULE_TOKEN_SECRET: "r".repeat(32),
+      TAVILY_API_KEY: "tavily-key",
+      GROQ_API_KEY: "groq-key",
+      GROQ_MODEL: "test-model",
+      TELEGRAM_BOT_TOKEN: "telegram-token",
+      TELEGRAM_BOT_USERNAME: "telegram-user",
+      TELEGRAM_WEBHOOK_SECRET: "telegram-secret",
+    })) {
+      vi.stubEnv(name, value);
+    }
+
+    try {
+      await expect(
+        runRadar("radar-1", "baseline", {
+          client,
+          groq: new Groq({
+            apiKey: "groq-key",
+            fetch: fakeFetch as never,
+            dangerouslyAllowBrowser: true,
+          }) as unknown as GroqLike,
+          searchTavily: async () => [testCandidate],
+          fetchRss: async () => [],
+          createNotification,
+          sendNotification,
+        }),
+      ).resolves.toMatchObject({ status: "success", notificationCount: 1 });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    expect(fakeFetch).toHaveBeenCalledTimes(1);
+    expect(requestInits[0]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
   it("does not write a Finding when the lease-safe persistence RPC loses the lease", async () => {
     const client = new MonitoringFakeClient();
     client.persistFindingRpcError = "RUN_NOT_CLAIMED";
@@ -971,6 +1365,7 @@ describe("run pipeline", () => {
     expect(sendNotification.mock.calls[0]?.[1]).toMatchObject({
       runId: "run-1",
       leaseOwner: "claim-owner",
+      cleanupDeadlineAt: expect.any(Number),
     });
   });
 
@@ -994,6 +1389,38 @@ describe("run pipeline", () => {
     });
   });
 
+  it("aborts an abortable database request when the outer budget expires", async () => {
+    vi.useFakeTimers();
+    let abortCount = 0;
+    const request = {
+      abortSignal(signal: AbortSignal) {
+        signal.addEventListener("abort", () => {
+          abortCount += 1;
+        });
+        return request;
+      },
+      then() {
+        return new Promise<never>(() => undefined);
+      },
+    } as unknown as PromiseLike<unknown>;
+
+    try {
+      const pending = withMonitoringDeadline(request, Date.now() + 100);
+      const outcome = pending.then(
+        () => ({ kind: "resolved" as const }),
+        (error: unknown) => ({ kind: "rejected" as const, error }),
+      );
+      await vi.advanceTimersByTimeAsync(100);
+      await expect(outcome).resolves.toMatchObject({
+        kind: "rejected",
+        error: { code: "RUN_DEADLINE_EXCEEDED" },
+      });
+      expect(abortCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("bounds recovery terminal cleanup by the remaining lease budget", async () => {
     const client = new MonitoringFakeClient();
     client.runLeaseExpiresAt = new Date(Date.now() + 50).toISOString();
@@ -1009,5 +1436,43 @@ describe("run pipeline", () => {
     ).rejects.toMatchObject({ code: "RUN_DEADLINE_EXCEEDED" });
 
     expect(Date.now() - startedAt).toBeLessThan(500);
+  });
+
+  it("recomputes recovery cleanup budget when a late infrastructure failure occurs", async () => {
+    vi.useFakeTimers();
+    const client = new MonitoringFakeClient();
+    client.persistFindingRpcError = "PERSIST_FAILED";
+    const searchTavily = vi.fn(
+      () =>
+        new Promise<Candidate[]>((resolve) => {
+          setTimeout(() => resolve([testCandidate]), 2_100);
+        }),
+    );
+
+    try {
+      const execution = executeClaimedRun("run-1", "claim-owner", {
+        client,
+        searchTavily,
+        fetchRss: async () => [],
+      });
+      const executionOutcome = execution.then(
+        () => ({ kind: "resolved" as const }),
+        (error: unknown) => ({ kind: "rejected" as const, error }),
+      );
+      await vi.waitFor(() => expect(searchTavily).toHaveBeenCalled());
+      await vi.advanceTimersByTimeAsync(2_100);
+
+      await expect(executionOutcome).resolves.toMatchObject({
+        kind: "rejected",
+        error: { code: "DATABASE_ERROR" },
+      });
+      expect(client.terminalRunUpdates.at(-1)).toMatchObject({
+        status: "failed",
+        lease_owner: null,
+        lease_expires_at: null,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

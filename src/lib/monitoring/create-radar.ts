@@ -1,4 +1,5 @@
 import { createClient as createAdminClient } from "@/lib/supabase/admin";
+import type { RunResult } from "@/types/contracts";
 
 export type MonitoringErrorCode =
   | "PROFILE_NOT_FOUND"
@@ -78,6 +79,110 @@ export type RadarRecord = {
   lease_owner?: string | null;
   lease_expires_at?: string | null;
 };
+
+export type PublicRadar = {
+  id: unknown;
+  user_id: unknown;
+  name: unknown;
+  original_prompt: unknown;
+  rules: unknown;
+  status: unknown;
+  interval_minutes: unknown;
+  baseline_cutoff_at: unknown;
+  last_checked_at: unknown;
+  next_check_at: unknown;
+  created_at: unknown;
+  updated_at: unknown;
+};
+
+export type PublicFinding = {
+  id: unknown;
+  radar_id: unknown;
+  source_type: unknown;
+  source_domain: unknown;
+  source_url: unknown;
+  canonical_url: unknown;
+  title: unknown;
+  summary: unknown;
+  published_at: unknown;
+  first_seen_at: unknown;
+  last_seen_at: unknown;
+  relevance_score: unknown;
+  importance_score: unknown;
+  match_reason: unknown;
+};
+
+export type PublicRun = {
+  id: unknown;
+  radar_id: unknown;
+  trigger: unknown;
+  status: unknown;
+  started_at: unknown;
+  finished_at: unknown;
+  candidate_count: unknown;
+  relevant_count: unknown;
+  notification_count: unknown;
+};
+
+export function toPublicRadar(row: Record<string, unknown>): PublicRadar {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    name: row.name,
+    original_prompt: row.original_prompt,
+    rules: row.rules,
+    status: row.status,
+    interval_minutes: row.interval_minutes,
+    baseline_cutoff_at: row.baseline_cutoff_at,
+    last_checked_at: row.last_checked_at ?? null,
+    next_check_at: row.next_check_at,
+    created_at: row.created_at ?? null,
+    updated_at: row.updated_at ?? null,
+  };
+}
+
+export function toPublicFinding(row: Record<string, unknown>): PublicFinding {
+  return {
+    id: row.id,
+    radar_id: row.radar_id,
+    source_type: row.source_type,
+    source_domain: row.source_domain,
+    source_url: row.source_url,
+    canonical_url: row.canonical_url,
+    title: row.title,
+    summary: row.summary,
+    published_at: row.published_at,
+    first_seen_at: row.first_seen_at,
+    last_seen_at: row.last_seen_at,
+    relevance_score: row.relevance_score,
+    importance_score: row.importance_score,
+    match_reason: row.match_reason,
+  };
+}
+
+export function toPublicRun(row: Record<string, unknown>): PublicRun {
+  return {
+    id: row.id,
+    radar_id: row.radar_id,
+    trigger: row.trigger,
+    status: row.status,
+    started_at: row.started_at,
+    finished_at: row.finished_at,
+    candidate_count: row.candidate_count,
+    relevant_count: row.relevant_count,
+    notification_count: row.notification_count,
+  };
+}
+
+export function toPublicRunResult(run: RunResult) {
+  return {
+    runId: run.runId,
+    status: run.status,
+    candidateCount: run.candidateCount,
+    relevantCount: run.relevantCount,
+    notificationCount: run.notificationCount,
+  };
+}
 
 export function getMonitoringClient(client?: MonitoringClient): MonitoringClient {
   return client ?? (createAdminClient() as unknown as MonitoringClient);

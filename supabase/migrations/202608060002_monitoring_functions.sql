@@ -247,7 +247,7 @@ begin
     return;
   end if;
 
-  if p_lease_expires_at <= now() then
+  if p_lease_expires_at <= clock_timestamp() then
     return query select null::uuid, null::uuid, 'INVALID_RUN_LEASE';
     return;
   end if;
@@ -273,7 +273,7 @@ begin
      where rr.radar_id = p_radar_id
        and rr.status = 'running'
        and rr.lease_expires_at is not null
-       and rr.lease_expires_at <= now()
+       and rr.lease_expires_at <= clock_timestamp()
      order by rr.started_at, rr.id
      for update
   loop
@@ -293,28 +293,28 @@ begin
 
     update public.radar_runs
        set status = recovered_status,
-           finished_at = timezone('utc', now()),
+           finished_at = timezone('utc', clock_timestamp()),
            lease_owner = null,
            lease_expires_at = null
      where id = stale_run.id
        and status = 'running'
        and lease_owner is not distinct from stale_run.lease_owner
-       and lease_expires_at <= now()
+       and lease_expires_at <= clock_timestamp()
      returning id into recovered_run_id;
 
     if recovered_run_id is not null then
       update public.radars
          set lease_owner = null,
              lease_expires_at = null,
-             last_checked_at = timezone('utc', now()),
+             last_checked_at = timezone('utc', clock_timestamp()),
              next_check_at = case
-               when recovered_status = 'failed' then now() + interval '15 minutes'
-               else now() + interval '6 hours'
+               when recovered_status = 'failed' then clock_timestamp() + interval '15 minutes'
+               else clock_timestamp() + interval '6 hours'
              end,
-             updated_at = timezone('utc', now())
+             updated_at = timezone('utc', clock_timestamp())
        where id = p_radar_id
          and lease_expires_at is not null
-         and lease_expires_at <= now();
+         and lease_expires_at <= clock_timestamp();
     end if;
   end loop;
 
@@ -323,7 +323,7 @@ begin
       from public.radar_runs rr
      where rr.radar_id = p_radar_id
        and rr.status = 'running'
-       and (rr.lease_expires_at is null or rr.lease_expires_at > now())
+       and (rr.lease_expires_at is null or rr.lease_expires_at > clock_timestamp())
   ) then
     return query select null::uuid, null::uuid, 'RADAR_ALREADY_LEASED';
     return;
@@ -334,8 +334,20 @@ begin
     return;
   end if;
 
+  select r.*
+    into radar_row
+    from public.radars r
+   where r.id = p_radar_id
+     and r.user_id = p_user_id
+   for update;
+
+  if p_lease_expires_at <= clock_timestamp() then
+    return query select null::uuid, null::uuid, 'INVALID_RUN_LEASE';
+    return;
+  end if;
+
   if radar_row.lease_expires_at is not null
-     and radar_row.lease_expires_at > now() then
+     and radar_row.lease_expires_at > clock_timestamp() then
     return query select null::uuid, null::uuid, 'RADAR_ALREADY_LEASED';
     return;
   end if;
@@ -381,10 +393,15 @@ begin
          lease_expires_at = p_lease_expires_at,
          updated_at = timezone('utc', now())
    where id = p_radar_id
-     and (lease_expires_at is null or lease_expires_at <= now())
+     and (lease_expires_at is null or lease_expires_at <= clock_timestamp())
+     and p_lease_expires_at > clock_timestamp()
   returning id into claimed_radar_id;
 
   if claimed_radar_id is null then
+    if p_lease_expires_at <= clock_timestamp() then
+      return query select null::uuid, null::uuid, 'INVALID_RUN_LEASE';
+      return;
+    end if;
     return query select null::uuid, null::uuid, 'RADAR_ALREADY_LEASED';
     return;
   end if;
@@ -1011,10 +1028,315 @@ begin
 end;
 $$;
 
+create or replace function public.persist_run_source_outcomes(
+  p_run_id uuid,
+  p_lease_owner uuid,
+  p_source_outcomes jsonb
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  radar_id_for_run uuid;
+  radar_lock_id uuid;
+  run_lock_id uuid;
+  persisted_outcomes jsonb := coalesce(p_source_outcomes, '[]'::jsonb);
+  persisted_success_count integer;
+begin
+  select rr.radar_id
+    into radar_id_for_run
+    from public.radar_runs rr
+   where rr.id = p_run_id;
+
+  if radar_id_for_run is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  select r.id
+    into radar_lock_id
+    from public.radars r
+   where r.id = radar_id_for_run
+   for update;
+
+  if radar_lock_id is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  select rr.id
+    into run_lock_id
+    from public.radar_runs rr
+   where rr.id = p_run_id
+     and rr.radar_id = radar_id_for_run
+     and rr.status = 'running'
+     and rr.lease_owner = p_lease_owner
+     and rr.lease_expires_at > clock_timestamp()
+   for update;
+
+  if run_lock_id is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  select count(*)::integer
+    into persisted_success_count
+    from jsonb_array_elements(persisted_outcomes) outcome
+   where outcome ->> 'success' = 'true';
+
+  update public.radar_runs
+     set source_outcomes = persisted_outcomes,
+         source_success_count = persisted_success_count
+   where id = p_run_id
+     and radar_id = radar_id_for_run
+     and status = 'running'
+     and lease_owner = p_lease_owner
+     and lease_expires_at > clock_timestamp()
+  returning id into run_lock_id;
+
+  if run_lock_id is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  return true;
+end;
+$$;
+
+create or replace function public.finalize_run_for_owner(
+  p_run_id uuid,
+  p_lease_owner uuid,
+  p_status text,
+  p_candidate_count integer,
+  p_relevant_count integer,
+  p_notification_count integer,
+  p_source_outcomes jsonb,
+  p_internal_errors jsonb
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  radar_id_for_run uuid;
+  radar_row public.radars%rowtype;
+  run_lock_id uuid;
+  radar_lock_id uuid;
+  finished_at_value timestamptz;
+begin
+  if p_status not in ('success', 'failed') then
+    raise exception 'INVALID_RUN_STATUS';
+  end if;
+
+  select rr.radar_id
+    into radar_id_for_run
+    from public.radar_runs rr
+   where rr.id = p_run_id;
+
+  if radar_id_for_run is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  select r.*
+    into radar_row
+    from public.radars r
+   where r.id = radar_id_for_run
+   for update;
+
+  if not found then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+  radar_lock_id := radar_row.id;
+
+  select rr.id
+    into run_lock_id
+    from public.radar_runs rr
+   where rr.id = p_run_id
+     and rr.radar_id = radar_id_for_run
+     and rr.status = 'running'
+     and rr.lease_owner = p_lease_owner
+     and rr.lease_expires_at > clock_timestamp()
+   for update;
+
+  if run_lock_id is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  finished_at_value := timezone('utc', clock_timestamp());
+  update public.radar_runs
+     set status = p_status,
+         finished_at = finished_at_value,
+         candidate_count = greatest(coalesce(p_candidate_count, 0), 0),
+         relevant_count = greatest(coalesce(p_relevant_count, 0), 0),
+         notification_count = greatest(coalesce(p_notification_count, 0), 0),
+         source_outcomes = coalesce(p_source_outcomes, '[]'::jsonb),
+         source_success_count = (
+           select count(*)::integer
+             from jsonb_array_elements(coalesce(p_source_outcomes, '[]'::jsonb)) outcome
+            where outcome ->> 'success' = 'true'
+         ),
+         internal_errors = coalesce(p_internal_errors, '[]'::jsonb),
+         lease_owner = null,
+         lease_expires_at = null
+   where id = p_run_id
+     and radar_id = radar_id_for_run
+     and status = 'running'
+     and lease_owner = p_lease_owner
+     and lease_expires_at > clock_timestamp()
+  returning id into run_lock_id;
+
+  if run_lock_id is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  update public.radars
+     set last_checked_at = finished_at_value,
+         next_check_at = clock_timestamp() + case
+           when p_status = 'failed' then interval '15 minutes'
+           else radar_row.interval_minutes * interval '1 minute'
+         end,
+         lease_owner = null,
+         lease_expires_at = null,
+         updated_at = timezone('utc', clock_timestamp())
+   where id = radar_lock_id
+     and lease_owner = p_lease_owner
+     and lease_expires_at > clock_timestamp()
+  returning id into radar_lock_id;
+
+  if radar_lock_id is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  return true;
+end;
+$$;
+
+create or replace function public.recover_run_for_owner(
+  p_run_id uuid,
+  p_lease_owner uuid,
+  p_error_code text
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  radar_id_for_run uuid;
+  radar_row public.radars%rowtype;
+  persisted_source_outcomes jsonb;
+  persisted_source_success_count integer;
+  recovered_status text;
+  run_lock_id uuid;
+  radar_lock_id uuid;
+  finished_at_value timestamptz;
+begin
+  select rr.radar_id
+    into radar_id_for_run
+    from public.radar_runs rr
+   where rr.id = p_run_id;
+
+  if radar_id_for_run is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  select r.*
+    into radar_row
+    from public.radars r
+   where r.id = radar_id_for_run
+   for update;
+
+  if not found then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+  radar_lock_id := radar_row.id;
+
+  select rr.id, rr.source_outcomes, rr.source_success_count
+    into run_lock_id, persisted_source_outcomes, persisted_source_success_count
+    from public.radar_runs rr
+   where rr.id = p_run_id
+     and rr.radar_id = radar_id_for_run
+     and rr.status = 'running'
+     and rr.lease_owner = p_lease_owner
+   for update;
+
+  if run_lock_id is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  recovered_status := case
+    when coalesce(persisted_source_success_count, 0) >= 1
+      or exists (
+        select 1
+          from jsonb_array_elements(coalesce(persisted_source_outcomes, '[]'::jsonb)) outcome
+         where outcome ->> 'success' = 'true'
+      )
+      then 'success'
+    else 'failed'
+  end;
+  finished_at_value := timezone('utc', clock_timestamp());
+
+  update public.radar_runs
+     set status = recovered_status,
+         finished_at = finished_at_value,
+         error_code = p_error_code,
+         source_outcomes = coalesce(persisted_source_outcomes, '[]'::jsonb),
+         source_success_count = greatest(
+           coalesce(persisted_source_success_count, 0),
+           (
+             select count(*)::integer
+               from jsonb_array_elements(coalesce(persisted_source_outcomes, '[]'::jsonb)) outcome
+              where outcome ->> 'success' = 'true'
+           )
+         ),
+         internal_errors = jsonb_build_array(
+           jsonb_build_object(
+             'source', 'runtime',
+             'errorCode', coalesce(p_error_code, 'RUN_RECOVERY_FAILED')
+           )
+         ),
+         lease_owner = null,
+         lease_expires_at = null
+   where id = p_run_id
+     and radar_id = radar_id_for_run
+     and status = 'running'
+     and lease_owner = p_lease_owner
+  returning id into run_lock_id;
+
+  if run_lock_id is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  update public.radars
+     set last_checked_at = finished_at_value,
+         next_check_at = clock_timestamp() + case
+           when recovered_status = 'failed' then interval '15 minutes'
+           else radar_row.interval_minutes * interval '1 minute'
+         end,
+         lease_owner = null,
+         lease_expires_at = null,
+         updated_at = timezone('utc', clock_timestamp())
+   where id = radar_lock_id
+     and lease_owner = p_lease_owner
+  returning id into radar_lock_id;
+
+  if radar_lock_id is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  return true;
+end;
+$$;
+
 revoke all on function public.persist_run_finding(uuid, uuid, text, text, text, text, text, timestamptz, text, text, boolean, boolean, integer, numeric, integer, text) from public, anon, authenticated;
 revoke all on function public.create_pending_notification_for_run(uuid, uuid, uuid, text) from public, anon, authenticated;
 revoke all on function public.mark_source_baseline_for_run(uuid, uuid, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.persist_run_source_outcomes(uuid, uuid, jsonb) from public, anon, authenticated;
+revoke all on function public.finalize_run_for_owner(uuid, uuid, text, integer, integer, integer, jsonb, jsonb) from public, anon, authenticated;
+revoke all on function public.recover_run_for_owner(uuid, uuid, text) from public, anon, authenticated;
 
 grant execute on function public.persist_run_finding(uuid, uuid, text, text, text, text, text, timestamptz, text, text, boolean, boolean, integer, numeric, integer, text) to service_role;
 grant execute on function public.create_pending_notification_for_run(uuid, uuid, uuid, text) to service_role;
 grant execute on function public.mark_source_baseline_for_run(uuid, uuid, text, timestamptz) to service_role;
+grant execute on function public.persist_run_source_outcomes(uuid, uuid, jsonb) to service_role;
+grant execute on function public.finalize_run_for_owner(uuid, uuid, text, integer, integer, integer, jsonb, jsonb) to service_role;
+grant execute on function public.recover_run_for_owner(uuid, uuid, text) to service_role;

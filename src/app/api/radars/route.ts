@@ -6,6 +6,8 @@ import {
   createRadarFromSetup,
   getMonitoringClient,
   MonitoringError,
+  toPublicRadar,
+  toPublicRunResult,
 } from "@/lib/monitoring/create-radar";
 import {
   MONITORING_ROUTE_BUDGET_MS,
@@ -14,53 +16,12 @@ import {
 } from "@/lib/monitoring/run-radar";
 import { createClient as createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createSessionClient } from "@/lib/supabase/server";
-import type { RunResult } from "@/types/contracts";
 
 export const maxDuration = 60;
 
 const setupIdSchema = z.object({
   setupId: z.uuid(),
 });
-
-function toPublicRadar(row: {
-  id: string;
-  user_id: string;
-  name: string;
-  original_prompt: string;
-  rules: unknown;
-  status: string;
-  interval_minutes: number;
-  baseline_cutoff_at: string;
-  last_checked_at?: string | null;
-  next_check_at: string;
-  created_at?: string;
-  updated_at?: string;
-}) {
-  return {
-    id: row.id,
-    user_id: row.user_id,
-    name: row.name,
-    original_prompt: row.original_prompt,
-    rules: row.rules,
-    status: row.status,
-    interval_minutes: row.interval_minutes,
-    baseline_cutoff_at: row.baseline_cutoff_at,
-    last_checked_at: row.last_checked_at ?? null,
-    next_check_at: row.next_check_at,
-    created_at: row.created_at ?? null,
-    updated_at: row.updated_at ?? null,
-  };
-}
-
-function toPublicRun(run: RunResult) {
-  return {
-    runId: run.runId,
-    status: run.status,
-    candidateCount: run.candidateCount,
-    relevantCount: run.relevantCount,
-    notificationCount: run.notificationCount,
-  };
-}
 
 function errorResponse(error: unknown): NextResponse {
   const code =
@@ -110,7 +71,13 @@ export async function GET() {
     return NextResponse.json({ error: "DATABASE_ERROR" }, { status: 500 });
   }
 
-  return NextResponse.json({ radars: result.data ?? [] });
+  const publicRadars = Array.isArray(result.data)
+    ? result.data.map((row) =>
+        toPublicRadar(row as Record<string, unknown>),
+      )
+    : [];
+
+  return NextResponse.json({ radars: publicRadars });
 }
 
 export async function POST(request: Request) {
@@ -136,22 +103,40 @@ export async function POST(request: Request) {
     createAdminClient() as unknown as Parameters<typeof getMonitoringClient>[0],
   );
 
+  let createdRadar: Awaited<ReturnType<typeof createRadarFromSetup>> | null = null;
   try {
-    const radar = await withMonitoringDeadline(
+    createdRadar = await withMonitoringDeadline(
       createRadarFromSetup(parsed.data.setupId, user.id, db),
       outerDeadlineAt,
     );
     const cookieStore = await cookies();
     cookieStore.delete("wa_setup");
-    const run = await runRadar(radar.id, "baseline", {
-      client: db,
-      outerDeadlineAt,
-    });
+    try {
+      const run = await runRadar(createdRadar.id, "baseline", {
+        client: db,
+        outerDeadlineAt,
+      });
 
-    return NextResponse.json(
-      { radar: toPublicRadar(radar), run: toPublicRun(run) },
-      { status: 201 },
-    );
+      return NextResponse.json(
+        {
+          radar: toPublicRadar(createdRadar as unknown as Record<string, unknown>),
+          run: toPublicRunResult(run),
+        },
+        { status: 201 },
+      );
+    } catch (error) {
+      const baselineError =
+        error instanceof MonitoringError ? error.code : "BASELINE_FAILED";
+      return NextResponse.json(
+        {
+          radar: toPublicRadar(createdRadar as unknown as Record<string, unknown>),
+          run: null,
+          error: baselineError,
+          baselineError,
+        },
+        { status: 500 },
+      );
+    }
   } catch (error) {
     return errorResponse(error);
   }

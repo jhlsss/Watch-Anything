@@ -4,6 +4,9 @@ import {
   firstRpcRow,
   getMonitoringClient,
   MonitoringError,
+  toPublicFinding,
+  toPublicRadar,
+  toPublicRun,
 } from "@/lib/monitoring/create-radar";
 import {
   parseRadarUpdate,
@@ -19,63 +22,9 @@ type RouteContext = {
 const radarDetailColumns =
   "id,user_id,name,original_prompt,rules,status,interval_minutes,baseline_cutoff_at,last_checked_at,next_check_at,created_at,updated_at";
 const findingDetailColumns =
-  "id,radar_id,first_run_id,source_type,source_domain,source_url,canonical_url,fingerprint,event_key,title,summary,published_at,first_seen_at,last_seen_at,relevance_score,importance_score,match_reason,notification_eligible";
+  "id,radar_id,source_type,source_domain,source_url,canonical_url,title,summary,published_at,first_seen_at,last_seen_at,relevance_score,importance_score,match_reason";
 const runDetailColumns =
   "id,radar_id,trigger,status,started_at,finished_at,candidate_count,relevant_count,notification_count";
-
-function toPublicRadar(row: Record<string, unknown>) {
-  return {
-    id: row.id,
-    user_id: row.user_id,
-    name: row.name,
-    original_prompt: row.original_prompt,
-    rules: row.rules,
-    status: row.status,
-    interval_minutes: row.interval_minutes,
-    baseline_cutoff_at: row.baseline_cutoff_at,
-    last_checked_at: row.last_checked_at,
-    next_check_at: row.next_check_at,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  };
-}
-
-function toPublicFinding(row: Record<string, unknown>) {
-  return {
-    id: row.id,
-    radar_id: row.radar_id,
-    first_run_id: row.first_run_id,
-    source_type: row.source_type,
-    source_domain: row.source_domain,
-    source_url: row.source_url,
-    canonical_url: row.canonical_url,
-    fingerprint: row.fingerprint,
-    event_key: row.event_key,
-    title: row.title,
-    summary: row.summary,
-    published_at: row.published_at,
-    first_seen_at: row.first_seen_at,
-    last_seen_at: row.last_seen_at,
-    relevance_score: row.relevance_score,
-    importance_score: row.importance_score,
-    match_reason: row.match_reason,
-    notification_eligible: row.notification_eligible,
-  };
-}
-
-function toPublicRun(row: Record<string, unknown>) {
-  return {
-    id: row.id,
-    radar_id: row.radar_id,
-    trigger: row.trigger,
-    status: row.status,
-    started_at: row.started_at,
-    finished_at: row.finished_at,
-    candidate_count: row.candidate_count,
-    relevant_count: row.relevant_count,
-    notification_count: row.notification_count,
-  };
-}
 
 function invalidId(id: string): boolean {
   return !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(
