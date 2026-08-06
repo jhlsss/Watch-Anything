@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import Groq from "groq-sdk";
+import OpenAI from "openai";
 
 vi.mock("@/lib/supabase/admin", () => ({
   createClient: vi.fn(),
@@ -21,7 +21,7 @@ import {
   runRadar,
   withMonitoringDeadline,
 } from "@/lib/monitoring/run-radar";
-import type { GroqLike } from "@/lib/ai/schemas";
+import type { AiLike } from "@/lib/ai/schemas";
 import type { Candidate, RadarRules } from "@/types/contracts";
 import { resolveRunStatus } from "@/lib/monitoring/run-status";
 import type { SourceOutcome } from "@/types/contracts";
@@ -1267,7 +1267,7 @@ describe("run pipeline", () => {
     expect(client.findingInserts).toHaveLength(1);
   });
 
-  it("passes the remaining budget, abort signal, and zero retries to production Groq", async () => {
+  it("passes the remaining budget, abort signal, and zero retries to production Gemini", async () => {
     const client = new MonitoringFakeClient();
     const requestOptions: {
       signal: AbortSignal;
@@ -1293,21 +1293,21 @@ describe("run pipeline", () => {
         });
       },
     );
-    const groq = {
+    const ai = {
       chat: {
         completions: {
           create,
         },
       },
-    } as unknown as GroqLike;
+    } as unknown as AiLike;
 
     for (const [name, value] of Object.entries({
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
       CRON_SECRET: "cron-secret",
       RULE_TOKEN_SECRET: "r".repeat(32),
       TAVILY_API_KEY: "tavily-key",
-      GROQ_API_KEY: "groq-key",
-      GROQ_MODEL: "test-model",
+      GEMINI_API_KEY: "gemini-key",
+      GEMINI_MODEL: "test-model",
       TELEGRAM_BOT_TOKEN: "telegram-token",
       TELEGRAM_BOT_USERNAME: "telegram-user",
       TELEGRAM_WEBHOOK_SECRET: "telegram-secret",
@@ -1319,7 +1319,7 @@ describe("run pipeline", () => {
       await expect(
         runRadar("radar-1", "baseline", {
           client,
-          groq,
+          ai,
           aiTimeoutMs: 20,
           searchTavily: async () => [testCandidate],
           fetchRss: async () => [],
@@ -1340,7 +1340,7 @@ describe("run pipeline", () => {
     expect(requestOptions[0]?.signal.aborted).toBe(true);
   });
 
-  it("preserves the Groq completions receiver and sends evaluated findings", async () => {
+  it("preserves the Gemini completions receiver and sends evaluated findings", async () => {
     const client = new MonitoringFakeClient();
     client.tavilyBaselineCompletedAt = "2026-08-05T00:00:00.000Z";
     const createNotification = vi.fn().mockResolvedValue({
@@ -1385,17 +1385,17 @@ describe("run pipeline", () => {
         };
       },
     };
-    const groq = {
+    const ai = {
       chat: { completions },
-    } as unknown as GroqLike;
+    } as unknown as AiLike;
 
     for (const [name, value] of Object.entries({
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
       CRON_SECRET: "cron-secret",
       RULE_TOKEN_SECRET: "r".repeat(32),
       TAVILY_API_KEY: "tavily-key",
-      GROQ_API_KEY: "groq-key",
-      GROQ_MODEL: "test-model",
+      GEMINI_API_KEY: "gemini-key",
+      GEMINI_MODEL: "test-model",
       TELEGRAM_BOT_TOKEN: "telegram-token",
       TELEGRAM_BOT_USERNAME: "telegram-user",
       TELEGRAM_WEBHOOK_SECRET: "telegram-secret",
@@ -1407,7 +1407,7 @@ describe("run pipeline", () => {
       await expect(
         runRadar("radar-1", "baseline", {
           client,
-          groq,
+          ai,
           searchTavily: async () => [testCandidate],
           fetchRss: async () => [],
           createNotification,
@@ -1423,7 +1423,7 @@ describe("run pipeline", () => {
     expect(sendNotification).toHaveBeenCalledTimes(1);
   });
 
-  it("uses the real Groq SDK receiver with one fake-fetch request", async () => {
+  it("uses the real Gemini OpenAI-compatible SDK receiver with one fake-fetch request", async () => {
     const client = new MonitoringFakeClient();
     client.tavilyBaselineCompletedAt = "2026-08-05T00:00:00.000Z";
     const createNotification = vi.fn().mockResolvedValue({
@@ -1469,8 +1469,8 @@ describe("run pipeline", () => {
       CRON_SECRET: "cron-secret",
       RULE_TOKEN_SECRET: "r".repeat(32),
       TAVILY_API_KEY: "tavily-key",
-      GROQ_API_KEY: "groq-key",
-      GROQ_MODEL: "test-model",
+      GEMINI_API_KEY: "gemini-key",
+      GEMINI_MODEL: "test-model",
       TELEGRAM_BOT_TOKEN: "telegram-token",
       TELEGRAM_BOT_USERNAME: "telegram-user",
       TELEGRAM_WEBHOOK_SECRET: "telegram-secret",
@@ -1482,11 +1482,12 @@ describe("run pipeline", () => {
       await expect(
         runRadar("radar-1", "baseline", {
           client,
-          groq: new Groq({
-            apiKey: "groq-key",
+          ai: new OpenAI({
+            apiKey: "gemini-key",
+            baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
             fetch: fakeFetch as never,
             dangerouslyAllowBrowser: true,
-          }) as unknown as GroqLike,
+          }) as unknown as AiLike,
           searchTavily: async () => [testCandidate],
           fetchRss: async () => [],
           createNotification,

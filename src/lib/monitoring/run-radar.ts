@@ -1,16 +1,16 @@
 import { randomUUID } from "node:crypto";
 
 import { type CandidateEvaluation } from "@/lib/ai/evaluate-candidates";
-import Groq from "groq-sdk";
 import { z } from "zod";
 import {
+  createGeminiClient,
   createStructuredOutput,
   evaluateCandidateItemSchema,
   evaluateCandidatesJsonSchema,
-  type GroqLike,
-  resolveGroqModel,
+  type AiLike,
+  type AiRequestOptions,
+  resolveGeminiModel,
 } from "@/lib/ai/schemas";
-import { parseServerEnv } from "@/lib/env";
 import {
   createPendingNotificationForRun as defaultCreatePendingNotificationForRun,
   sendPendingNotification as defaultSendPendingNotification,
@@ -104,7 +104,7 @@ export type RunRadarDependencies = {
   leaseDurationMs?: number;
   aiTimeoutMs?: number;
   outerDeadlineAt?: number;
-  groq?: GroqLike;
+  ai?: AiLike;
 };
 
 type SourceBaselineState = {
@@ -224,30 +224,25 @@ function withAiTimeout<T>(
   return withRunDeadline(promise, aiDeadlineAt, timeoutError);
 }
 
-type GroqRequestOptions = {
-  signal: AbortSignal;
-  timeout: number;
-  maxRetries: 0;
-};
-
-type GroqCreateWithOptions = (
-  this: GroqLike["chat"]["completions"],
+type AiCreateWithOptions = (
+  this: AiLike["chat"]["completions"],
   request: Record<string, unknown>,
-  options: GroqRequestOptions,
-) => Promise<Awaited<ReturnType<GroqLike["chat"]["completions"]["create"]>>>;
+  options: AiRequestOptions,
+) => Promise<Awaited<ReturnType<AiLike["chat"]["completions"]["create"]>>>;
 
-function createDeadlineGroq(
-  groq: GroqLike,
+function createDeadlineAi(
+  ai: AiLike,
   controller: AbortController,
   deadlineAt: number,
-): GroqLike {
-  const create = groq.chat.completions.create as unknown as GroqCreateWithOptions;
+): AiLike {
+  const create = ai.chat.completions.create as unknown as AiCreateWithOptions;
 
   return {
     chat: {
       completions: {
-        create: (request) =>
-          create.call(groq.chat.completions, request, {
+        create: (request, options) =>
+          create.call(ai.chat.completions, request, {
+            ...options,
             signal: controller.signal,
             timeout: Math.max(1, deadlineAt - Date.now()),
             maxRetries: 0,
@@ -261,7 +256,7 @@ async function evaluateCandidatesWithDeadline(
   input: { rules: RadarRules; candidates: Candidate[] },
   deadlineAt: number,
   timeoutMs: number,
-  groqOverride?: GroqLike,
+  aiOverride?: AiLike,
 ): Promise<CandidateEvaluation[]> {
   const aiDeadlineAt = Math.min(
     deadlineAt,
@@ -279,13 +274,7 @@ async function evaluateCandidatesWithDeadline(
   );
 
   try {
-    const groq =
-      groqOverride ??
-      (new Groq({
-        apiKey: parseServerEnv().GROQ_API_KEY,
-        timeout: requestBudgetMs,
-        maxRetries: 0,
-      }) as unknown as GroqLike);
+    const ai = aiOverride ?? createGeminiClient();
     const selectedCandidates = input.candidates.slice(0, 8);
     const promptCandidates = selectedCandidates.map((candidate) => ({
       ...candidate,
@@ -295,8 +284,8 @@ async function evaluateCandidatesWithDeadline(
       .array(evaluateCandidateItemSchema)
       .length(selectedCandidates.length);
     const evaluations = await createStructuredOutput({
-      groq: createDeadlineGroq(groq, controller, aiDeadlineAt),
-      model: resolveGroqModel(),
+      ai: createDeadlineAi(ai, controller, aiDeadlineAt),
+      model: resolveGeminiModel(),
       schemaName: "evaluate_candidates",
       jsonSchema: evaluateCandidatesJsonSchema,
       validator: evaluationSchema,
@@ -1021,7 +1010,7 @@ export async function executeClaimedRun(
               input,
               deadlineAt,
               aiTimeoutMs,
-              dependencies.groq,
+              dependencies.ai,
             ));
         evaluations = await withAiTimeout(
           evaluate({
