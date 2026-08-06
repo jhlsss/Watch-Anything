@@ -268,6 +268,63 @@ async function runStructuredCompletion<T>({
   return parseStructuredContent(readMessageContent(response), validator);
 }
 
+function isRateLimitError(error: unknown): error is { status: 429; headers?: Headers } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    error.status === 429
+  );
+}
+
+function rateLimitRetryDelayMs(error: { headers?: Headers }): number {
+  const retryAfterMs = error.headers?.get("retry-after-ms");
+
+  if (retryAfterMs) {
+    const delayMs = Number(retryAfterMs);
+
+    if (Number.isFinite(delayMs) && delayMs >= 0) {
+      return Math.min(delayMs, 10_000);
+    }
+  }
+
+  const retryAfter = error.headers?.get("retry-after");
+
+  if (retryAfter) {
+    const delaySeconds = Number(retryAfter);
+
+    if (Number.isFinite(delaySeconds) && delaySeconds >= 0) {
+      return Math.min(delaySeconds * 1_000, 10_000);
+    }
+
+    const delayMs = Date.parse(retryAfter) - Date.now();
+
+    if (Number.isFinite(delayMs) && delayMs >= 0) {
+      return Math.min(delayMs, 10_000);
+    }
+  }
+
+  return 1_000;
+}
+
+async function runStructuredCompletionWithRateLimitRetry<T>(
+  options: Parameters<typeof runStructuredCompletion<T>>[0],
+): Promise<T> {
+  try {
+    return await runStructuredCompletion(options);
+  } catch (error) {
+    if (!isRateLimitError(error)) {
+      throw error;
+    }
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, rateLimitRetryDelayMs(error));
+    });
+
+    return runStructuredCompletion(options);
+  }
+}
+
 export async function createStructuredOutput<T>({
   groq,
   model,
@@ -286,7 +343,7 @@ export async function createStructuredOutput<T>({
   maxCompletionTokens?: number;
 }): Promise<T> {
   try {
-    return await runStructuredCompletion({
+    return await runStructuredCompletionWithRateLimitRetry({
       groq,
       model,
       schemaName,
@@ -306,7 +363,7 @@ export async function createStructuredOutput<T>({
     }
 
     try {
-      return await runStructuredCompletion({
+      return await runStructuredCompletionWithRateLimitRetry({
         groq,
         model,
         schemaName,
