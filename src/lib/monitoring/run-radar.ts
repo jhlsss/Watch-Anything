@@ -127,6 +127,17 @@ type SavedFinding = {
   evaluation: EvaluationData | null;
 };
 
+type RequeuedNotification = {
+  id: string;
+  findingId: string;
+  destinationId: string;
+  status: string;
+};
+
+type NotificationWorkItem =
+  | { kind: "existing"; notification: RequeuedNotification }
+  | { kind: "finding"; saved: SavedFinding };
+
 const DEFAULT_AI_TIMEOUT_MS = 20_000;
 const MAX_TIMER_MS = 2_147_000_000;
 
@@ -754,6 +765,40 @@ async function readTelegramDestination(
   return String((result.data as { chat_id: string | number }).chat_id);
 }
 
+async function requeueFailedNotificationsForRun(
+  client: MonitoringClient,
+  runId: string,
+  leaseOwner: string,
+): Promise<RequeuedNotification[]> {
+  const result = await client.rpc("requeue_failed_notifications_for_run", {
+    p_run_id: runId,
+    p_lease_owner: leaseOwner,
+  });
+  throwRunRpcError(result.error);
+
+  const rows = asRecordArray(
+    Array.isArray(result.data) ? result.data : result.data ? [result.data] : [],
+  );
+  return rows.flatMap((row) => {
+    if (
+      typeof row.notification_id !== "string" ||
+      typeof row.finding_id !== "string" ||
+      typeof row.destination_id !== "string"
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        id: row.notification_id,
+        findingId: row.finding_id,
+        destinationId: row.destination_id,
+        status: typeof row.status === "string" ? row.status : "pending",
+      },
+    ];
+  });
+}
+
 async function finalizeRun(
   client: MonitoringClient,
   run: RunRecord,
@@ -1046,8 +1091,22 @@ export async function executeClaimedRun(
       readTelegramDestination(db, radar.user_id),
       deadlineAt,
     );
+    const requeuedFailedNotifications = destinationId
+      ? await withRunDeadline(
+          requeueFailedNotificationsForRun(db, run.id, leaseOwner),
+          deadlineAt,
+        )
+      : [];
+    const requeuedFindingIds = new Set(
+      requeuedFailedNotifications.map((notification) => notification.findingId),
+    );
     const notificationFindings = new Map<string, SavedFinding>();
-    for (const saved of savedFindings.filter((item) => item.eligible && !aiFailed)) {
+    for (const saved of savedFindings.filter(
+      (item) =>
+        item.eligible &&
+        !aiFailed &&
+        !requeuedFindingIds.has(item.finding.id),
+    )) {
       const key = saved.finding.event_key?.trim() || saved.finding.fingerprint;
       const existing = notificationFindings.get(key);
       if (
@@ -1073,20 +1132,36 @@ export async function executeClaimedRun(
         outerDeadlineAt,
         leaseDeadlineAt,
       );
+      const notificationWorklist: NotificationWorkItem[] = [
+        ...requeuedFailedNotifications.map((notification) => ({
+          kind: "existing" as const,
+          notification,
+        })),
+        ...[...notificationFindings.values()].map((saved) => ({
+          kind: "finding" as const,
+          saved,
+        })),
+      ];
 
       const notificationResults = await withRunDeadline(
         Promise.all(
-          [...notificationFindings.values()].map(async (saved) => {
+          notificationWorklist.map(async (workItem) => {
             assertRunDeadline(deadlineAt);
-            const notification = await withRunDeadline(
-              createNotification(
-                saved.finding.id,
-                destinationId,
-                db,
-                { runId: run.id, leaseOwner },
-              ),
-              deadlineAt,
-            );
+            const notification =
+              workItem.kind === "existing"
+                ? {
+                    id: workItem.notification.id,
+                    status: workItem.notification.status,
+                  }
+                : await withRunDeadline(
+                    createNotification(
+                      workItem.saved.finding.id,
+                      destinationId,
+                      db,
+                      { runId: run.id, leaseOwner },
+                    ),
+                    deadlineAt,
+                  );
             if (notification.status !== "pending") {
               return null;
             }
@@ -1122,7 +1197,10 @@ export async function executeClaimedRun(
           });
         }
       }
-    } else if (notificationFindings.size > 0) {
+    } else if (
+      notificationFindings.size > 0 ||
+      requeuedFailedNotifications.length > 0
+    ) {
       telegramFailed = true;
       internalErrors.push({ source: "telegram", errorCode: "TELEGRAM_NOT_CONNECTED" });
     }

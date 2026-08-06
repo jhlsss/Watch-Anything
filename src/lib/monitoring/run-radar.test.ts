@@ -660,6 +660,9 @@ class MonitoringFakeClient implements MonitoringClient {
   recoveryRequestAbortCount = 0;
   sourcePersistenceFailures = 0;
   persistFindingRpcError: string | null = null;
+  persistedSourceSuccessCount = 0;
+  recoveryStatus: "success" | "failed" = "failed";
+  recoveryNextCheckAt: string | null = null;
   tavilyBaselineCompletedAt: string | null = null;
   runLeaseExpiresAt = "2099-08-06T00:00:00.000Z";
   existingNotificationStatus: "pending" | "sending" | "failed" | "unknown" = "pending";
@@ -832,6 +835,15 @@ class MonitoringFakeClient implements MonitoringClient {
           error: { code: "PGRST500", message: "source write failed" },
         });
       }
+      const outcomes = Array.isArray(args.p_source_outcomes)
+        ? args.p_source_outcomes
+        : [];
+      this.persistedSourceSuccessCount = outcomes.filter(
+        (outcome) =>
+          typeof outcome === "object" &&
+          outcome !== null &&
+          (outcome as { success?: unknown }).success === true,
+      ).length;
       return Promise.resolve({
         data: this.sourceUpdateRows ? [true] : [],
         error: null,
@@ -891,16 +903,22 @@ class MonitoringFakeClient implements MonitoringClient {
         return request as unknown as Promise<DatabaseResult>;
       }
       const recover = () => {
+        const recoveredStatus = "failed" as const;
+        this.recoveryStatus = recoveredStatus;
+        this.recoveryNextCheckAt = new Date(
+          Date.now() + (recoveredStatus === "failed" ? 15 * 60_000 : 6 * 60 * 60_000),
+        ).toISOString();
         const update = {
-          status: "failed",
+          status: recoveredStatus,
           lease_owner: null,
           lease_expires_at: null,
+          next_check_at: this.recoveryNextCheckAt,
         };
         this.terminalRunUpdates.push(update);
         if (!this.radarUpdateRows || this.runStatus !== "running") {
           return { data: [], error: null };
         }
-        this.runStatus = "failed";
+        this.runStatus = recoveredStatus;
         return { data: [true], error: null };
       };
       if (this.terminalUpdateDelayMs > 0) {
@@ -975,6 +993,25 @@ class MonitoringFakeClient implements MonitoringClient {
         error: null,
       });
     }
+    if (functionName === "requeue_failed_notifications_for_run") {
+      if (this.existingNotificationStatus !== "failed") {
+        return Promise.resolve({ data: [], error: null });
+      }
+      this.existingNotificationStatus = "pending";
+      return Promise.resolve({
+        data: [
+          {
+            notification_id: "notification-1",
+            finding_id: "finding-rpc-1",
+            radar_id: "radar-1",
+            user_id: "user-1",
+            destination_id: "chat-1",
+            status: "pending",
+          },
+        ],
+        error: null,
+      });
+    }
     return Promise.resolve({ data: [], error: null });
   }
 }
@@ -997,6 +1034,7 @@ describe("run pipeline", () => {
       "persist_run_source_outcomes",
       "mark_source_baseline_for_run",
       "mark_source_baseline_for_run",
+      "requeue_failed_notifications_for_run",
       "finalize_run_for_owner",
     ]);
   });
@@ -1148,6 +1186,39 @@ describe("run pipeline", () => {
       lease_owner: null,
       lease_expires_at: null,
     });
+  });
+
+  it("recovers source success plus later DB failure as failed with a short retry", async () => {
+    const client = new MonitoringFakeClient();
+    client.persistFindingRpcError = "finding write failed";
+
+    await expect(
+      runRadar("radar-1", "baseline", {
+        client,
+        searchTavily: async () => [testCandidate],
+        fetchRss: async () => [],
+        evaluate: async () => [
+          {
+            candidate: testCandidate,
+            evaluation: {
+              relevant: true,
+              relevance_score: 90,
+              importance_score: 90,
+              confidence: 0.9,
+              event_key: "recovery-source-success-event",
+              duplicate_of_event_key: null,
+              reason: "matches",
+            },
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: "DATABASE_ERROR" });
+
+    expect(client.persistedSourceSuccessCount).toBeGreaterThan(0);
+    expect(client.recoveryStatus).toBe("failed");
+    const retryAt = Date.parse(client.recoveryNextCheckAt ?? "");
+    expect(retryAt).toBeGreaterThan(Date.now() + 14 * 60_000);
+    expect(retryAt).toBeLessThan(Date.now() + 16 * 60_000);
   });
 
   it("does not write findings after the run loses its lease", async () => {
@@ -1614,6 +1685,28 @@ describe("run pipeline", () => {
 
     expect(client.existingNotificationStatus).toBe("pending");
     expect(sendNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("requeues a failed notification worklist with zero current candidates", async () => {
+    const client = new MonitoringFakeClient();
+    client.existingNotificationStatus = "failed";
+    const sendNotification = vi.fn().mockResolvedValue({
+      notificationId: "notification-1",
+      status: "sent",
+      messageId: 1,
+    });
+
+    await runRadar("radar-1", "baseline", {
+      client,
+      searchTavily: async () => [],
+      fetchRss: async () => [],
+      sendNotification,
+    });
+
+    expect(client.existingNotificationStatus).toBe("pending");
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+    expect(client.findingInserts).toHaveLength(0);
+    expect(client.rpcCalls).toContain("requeue_failed_notifications_for_run");
   });
 
   it("keeps an unknown notification terminal and never sends it", async () => {

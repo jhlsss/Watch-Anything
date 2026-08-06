@@ -1393,16 +1393,7 @@ begin
     raise exception 'RUN_NOT_CLAIMED';
   end if;
 
-  recovered_status := case
-    when coalesce(persisted_source_success_count, 0) >= 1
-      or exists (
-        select 1
-          from jsonb_array_elements(coalesce(persisted_source_outcomes, '[]'::jsonb)) outcome
-         where outcome ->> 'success' = 'true'
-      )
-      then 'success'
-    else 'failed'
-  end;
+  recovered_status := 'failed';
   finished_at_value := timezone('utc', clock_timestamp());
 
   update public.radar_runs
@@ -1439,10 +1430,7 @@ begin
 
   update public.radars
      set last_checked_at = finished_at_value,
-         next_check_at = clock_timestamp() + case
-           when recovered_status = 'failed' then interval '15 minutes'
-           else radar_row.interval_minutes * interval '1 minute'
-         end,
+         next_check_at = clock_timestamp() + interval '15 minutes',
          lease_owner = null,
          lease_expires_at = null,
          updated_at = timezone('utc', clock_timestamp())
@@ -1459,8 +1447,97 @@ begin
 end;
 $$;
 
+create or replace function public.requeue_failed_notifications_for_run(
+  p_run_id uuid,
+  p_lease_owner uuid
+)
+returns table (
+  notification_id uuid,
+  finding_id uuid,
+  radar_id uuid,
+  user_id uuid,
+  destination_id text,
+  status text
+)
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  radar_id_for_run uuid;
+  radar_lock_id uuid;
+  run_lock_id uuid;
+  lease_cas_id uuid;
+begin
+  select rr.radar_id
+    into radar_id_for_run
+    from public.radar_runs rr
+   where rr.id = p_run_id;
+
+  if radar_id_for_run is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  select r.id
+    into radar_lock_id
+    from public.radars r
+   where r.id = radar_id_for_run
+   for update;
+
+  if radar_lock_id is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  select rr.id
+    into run_lock_id
+    from public.radar_runs rr
+   where rr.id = p_run_id
+     and rr.radar_id = radar_id_for_run
+     and rr.status = 'running'
+     and rr.lease_owner = p_lease_owner
+     and rr.lease_expires_at > clock_timestamp()
+   for update;
+
+  if run_lock_id is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  update public.radar_runs
+     set lease_expires_at = lease_expires_at
+   where id = p_run_id
+     and radar_id = radar_id_for_run
+     and status = 'running'
+     and lease_owner = p_lease_owner
+     and lease_expires_at > clock_timestamp()
+  returning id into lease_cas_id;
+
+  if lease_cas_id is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  return query
+  update public.notifications n
+     set status = 'pending',
+         error_code = null,
+         claimed_at = null
+   where n.radar_id = radar_id_for_run
+     and n.status = 'failed'
+     and exists (
+       select 1
+         from public.radar_runs rr
+        where rr.id = p_run_id
+          and rr.radar_id = radar_id_for_run
+          and rr.status = 'running'
+          and rr.lease_owner = p_lease_owner
+          and rr.lease_expires_at > clock_timestamp()
+     )
+  returning n.id, n.finding_id, n.radar_id, n.user_id, n.destination_id, n.status;
+end;
+$$;
+
 revoke all on function public.persist_run_finding(uuid, uuid, text, text, text, text, text, timestamptz, text, text, boolean, boolean, integer, numeric, integer, text) from public, anon, authenticated;
 revoke all on function public.create_pending_notification_for_run(uuid, uuid, uuid, text) from public, anon, authenticated;
+revoke all on function public.requeue_failed_notifications_for_run(uuid, uuid) from public, anon, authenticated;
 revoke all on function public.mark_source_baseline_for_run(uuid, uuid, text, timestamptz) from public, anon, authenticated;
 revoke all on function public.persist_run_source_outcomes(uuid, uuid, jsonb) from public, anon, authenticated;
 revoke all on function public.finalize_run_for_owner(uuid, uuid, text, integer, integer, integer, jsonb, jsonb) from public, anon, authenticated;
@@ -1468,6 +1545,7 @@ revoke all on function public.recover_run_for_owner(uuid, uuid, text) from publi
 
 grant execute on function public.persist_run_finding(uuid, uuid, text, text, text, text, text, timestamptz, text, text, boolean, boolean, integer, numeric, integer, text) to service_role;
 grant execute on function public.create_pending_notification_for_run(uuid, uuid, uuid, text) to service_role;
+grant execute on function public.requeue_failed_notifications_for_run(uuid, uuid) to service_role;
 grant execute on function public.mark_source_baseline_for_run(uuid, uuid, text, timestamptz) to service_role;
 grant execute on function public.persist_run_source_outcomes(uuid, uuid, jsonb) to service_role;
 grant execute on function public.finalize_run_for_owner(uuid, uuid, text, integer, integer, integer, jsonb, jsonb) to service_role;

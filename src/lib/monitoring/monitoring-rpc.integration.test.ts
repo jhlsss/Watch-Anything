@@ -52,8 +52,9 @@ describe("monitoring migration contract", () => {
     expect(migration).toMatch(
       /for stale_run in select .* from public\.radar_runs .*status = 'running'.*lease_expires_at <= clock_timestamp\(\).*for update/,
     );
-    expect(migration).toMatch(
-      /recovered_status := case .*source_success_count.*source_outcomes/,
+    expect(migration).toContain("recovered_status := 'failed'");
+    expect(migration).toContain(
+      "next_check_at = clock_timestamp() + interval '15 minutes'",
     );
     expect(migration).toMatch(
       /update public\.radar_runs .*status = recovered_status.*finished_at = timezone\('utc', clock_timestamp\(\)\).*lease_owner = null.*lease_expires_at = null/,
@@ -338,6 +339,35 @@ describe("monitoring migration contract", () => {
     expect(functionBody).not.toMatch(
       /notification_row\.status = 'unknown'[\s\S]*set status = 'pending'/u,
     );
+  });
+
+  it("exposes a lease-bound failed notification worklist for a Radar run", () => {
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "supabase/migrations/202608060002_monitoring_functions.sql",
+      ),
+      "utf8",
+    )
+      .replace(/--.*$/gm, "")
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+    const functionStart = migration.indexOf(
+      "create or replace function public.requeue_failed_notifications_for_run",
+    );
+    expect(functionStart).toBeGreaterThan(-1);
+    const functionBody = migration.slice(
+      functionStart,
+      migration.indexOf("$$;", functionStart),
+    );
+
+    expect(functionBody).toContain("p_run_id uuid");
+    expect(functionBody).toContain("p_lease_owner uuid");
+    expect(functionBody).toContain("status = 'running'");
+    expect(functionBody).toContain("lease_expires_at > clock_timestamp()");
+    expect(functionBody).toContain("n.status = 'failed'");
+    expect(functionBody).toContain("set status = 'pending'");
+    expect(functionBody).not.toContain("status = 'unknown'");
   });
 
   it("passes an absolute create deadline into the RPC and enforces it around locks and insert", () => {
