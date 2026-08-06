@@ -153,7 +153,9 @@ describe("createStructuredOutput", () => {
         maxRetries: 0,
       },
     );
-    expect(create.mock.calls[0]?.[0]).not.toHaveProperty("max_completion_tokens");
+    expect((create.mock.calls as unknown[][])[0]?.[0]).not.toHaveProperty(
+      "max_completion_tokens",
+    );
   });
 
   it("classifies invalid responses as AI_INVALID_RESPONSE after one repair attempt", async () => {
