@@ -100,7 +100,9 @@ const copy = {
     findingsTitle: "Latest findings",
     findingsDescription: "Important results saved for this Radar.",
     runTitle: "Run history",
+    dataErrorTitle: "Radar data is temporarily unavailable",
     dataError: "Some live details could not be loaded. Refresh and try again.",
+    retry: "Retry",
     runStats: "Latest run",
     noLatestRun: "No completed run yet",
     sources: "sources",
@@ -134,7 +136,9 @@ const copy = {
     findingsTitle: "最新发现",
     findingsDescription: "保存到这个 Radar 的重要结果。",
     runTitle: "运行记录",
+    dataErrorTitle: "Radar 数据暂时不可用",
     dataError: "部分实时详情加载失败，请刷新后重试。",
+    retry: "重试",
     runStats: "最近一次运行",
     noLatestRun: "还没有完成的运行记录",
     sources: "个来源",
@@ -231,14 +235,41 @@ export default async function RadarDetailPage({ params, searchParams }: { params
     supabase.from("telegram_connections").select("telegram_username").eq("user_id", user.id).maybeSingle(),
   ]);
 
-  if (radarError || !radarData) {
+  const paramsValue = await searchParams;
+  const locale = await resolveLocale(paramsValue, (profile as { locale?: string } | null)?.locale ?? null);
+  const labels = copy[locale];
+
+  if (radarError) {
+    return (
+      <div className="flex min-h-screen min-w-0 bg-slate-50 text-slate-950">
+        <WorkspaceNavigation locale={locale} currentPath={`/radars/${id}`} />
+        <main className="min-w-0 flex-1 px-4 py-6 pb-24 sm:px-6 min-[850px]:pb-8">
+          <div className="mx-auto w-full max-w-3xl min-w-0">
+            <Link href={`/radars?lang=${locale}`} className="inline-flex items-center gap-1 text-sm font-semibold text-violet-700 hover:text-violet-900">
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+              {labels.back}
+            </Link>
+            <section className="mt-8 rounded-3xl border border-amber-100 bg-amber-50 p-6 shadow-sm">
+              <h1 className="text-2xl font-semibold tracking-tight text-slate-950">{labels.dataErrorTitle}</h1>
+              <p role="alert" className="mt-3 text-sm leading-6 text-amber-800">{labels.dataError}</p>
+              <Link
+                href={`/radars/${id}?lang=${locale}`}
+                className="mt-5 inline-flex rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-500"
+              >
+                {labels.retry}
+              </Link>
+            </section>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  if (!radarData) {
     notFound();
   }
 
   const radar = radarData as RadarRow;
-  const paramsValue = await searchParams;
-  const locale = await resolveLocale(paramsValue, (profile as { locale?: string } | null)?.locale ?? null);
-  const labels = copy[locale];
   const rules = parseRules(radar);
 
   const [{ data: findingData, error: findingError }, { data: runData, error: runError }] = await Promise.all([

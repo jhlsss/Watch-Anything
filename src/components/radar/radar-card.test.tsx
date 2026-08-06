@@ -1,10 +1,26 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ReactElement } from "react";
+
+const notFoundMock = vi.hoisted(() => vi.fn(() => {
+  throw new Error("NOT_FOUND");
+}));
+const createBrowserClientMock = vi.hoisted(() => vi.fn());
+const createServerClientMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/supabase/client", () => ({ createClient: createBrowserClientMock }));
+vi.mock("@/lib/supabase/server", () => ({ createClient: createServerClientMock }));
+vi.mock("next/headers", () => ({
+  cookies: vi.fn(async () => ({ get: () => undefined })),
+}));
+
 import { RadarCard, type RadarCardRadar } from "@/components/radar/radar-card";
 import { FindingsList, type FindingsListFinding } from "@/components/radar/findings-list";
-import { RadarActions } from "@/components/radar/radar-actions";
+import { RadarActions, WorkspaceLocaleSwitcher, WorkspaceNavigation } from "@/components/radar/radar-actions";
 import { RunHistory, type RunHistoryRun } from "@/components/radar/run-history";
+import RadarDetailPage from "@/app/radars/[id]/page";
+import { createClient } from "@/lib/supabase/client";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/radars/radar-1",
@@ -12,7 +28,36 @@ vi.mock("next/navigation", () => ({
     push: vi.fn(),
     refresh: vi.fn(),
   }),
+  notFound: notFoundMock,
+  redirect: vi.fn((path: string) => {
+    throw new Error(`REDIRECT:${path}`);
+  }),
 }));
+
+type QueryResult = { data: unknown; error: unknown };
+type QueryBuilder = {
+  select: () => QueryBuilder;
+  eq: () => QueryBuilder;
+  order: () => QueryBuilder;
+  in: () => QueryBuilder;
+  limit: () => Promise<QueryResult>;
+  maybeSingle: () => Promise<QueryResult>;
+  then: Promise<QueryResult>["then"];
+};
+
+function makeQuery(result: QueryResult): QueryBuilder {
+  const resolve = () => Promise.resolve(result);
+  const builder: QueryBuilder = {
+    select: () => builder,
+    eq: () => builder,
+    order: () => builder,
+    in: () => builder,
+    limit: resolve,
+    maybeSingle: resolve,
+    then: (onFulfilled, onRejected) => resolve().then(onFulfilled, onRejected),
+  };
+  return builder;
+}
 
 const openAiRadar: RadarCardRadar = {
   id: "8a4a2cf8-02b9-4c68-8f33-0f5f160f1a42",
@@ -87,7 +132,14 @@ const runs: RunHistoryRun[] = [
 ];
 
 describe("RadarCard", () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.mocked(createClient).mockReset();
+    createServerClientMock.mockReset();
+    notFoundMock.mockClear();
+    document.cookie = "wa_locale=; Path=/; Max-Age=0";
+  });
 
   it("shows the localized paused state and links by radar id", () => {
     render(<RadarCard radar={openAiRadar} locale="zh-CN" />);
@@ -166,6 +218,52 @@ describe("RadarCard", () => {
     });
   });
 
+  it("uses the API error field for the active-radar limit message", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({ error: "ACTIVE_RADAR_LIMIT_REACHED" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <RadarActions
+        radarId={openAiRadar.id}
+        status="paused"
+        locale="zh-CN"
+        rules={{ radarName: openAiRadar.name, includeTopics: openAiRadar.includeTopics, excludeTopics: [] }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "恢复" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("当前已有 3 个运行中的 Radar，暂时无法恢复此 Radar。");
+    });
+  });
+
+  it("uses the API error field for run limit failures", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({ error: "ACTIVE_RADAR_LIMIT_REACHED" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <RadarActions
+        radarId={lisaRadar.id}
+        status="active"
+        locale="en"
+        rules={{ radarName: lisaRadar.name, includeTopics: lisaRadar.includeTopics, excludeTopics: [] }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Check now" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("This Radar cannot be resumed while three Radars are active.");
+    });
+  });
+
   it("keeps the edit form open when the rules PATCH fails", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) });
     vi.stubGlobal("fetch", fetchMock);
@@ -217,5 +315,53 @@ describe("RadarCard", () => {
         }),
       );
     });
+  });
+
+  it("does not write a locale cookie when the profile update fails", async () => {
+    const eqMock = vi.fn().mockResolvedValue({ error: new Error("profile update failed") });
+    const updateMock = vi.fn().mockReturnValue({ eq: eqMock });
+    const fromMock = vi.fn().mockReturnValue({ update: updateMock });
+    vi.mocked(createClient).mockReturnValue({ from: fromMock } as never);
+
+    render(<WorkspaceLocaleSwitcher locale="en" userId="user-1" path="/dashboard" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+
+    await waitFor(() => expect(screen.getByText("Language preference could not be saved.")).toBeInTheDocument());
+    expect(document.cookie).not.toContain("wa_locale=zh-CN");
+    expect(eqMock).toHaveBeenCalledWith("id", "user-1");
+  });
+
+  it("keeps the current locale on desktop and mobile workspace links", () => {
+    render(<WorkspaceNavigation locale="zh-CN" currentPath="/radars" />);
+
+    expect(screen.getAllByRole("link", { name: "Dashboard" }).every((link) => link.getAttribute("href") === "/dashboard?lang=zh-CN")).toBe(true);
+    expect(screen.getAllByRole("link", { name: "Radars" }).every((link) => link.getAttribute("href") === "/radars?lang=zh-CN")).toBe(true);
+    expect(screen.getAllByRole("link", { name: "Telegram" }).every((link) => link.getAttribute("href") === "/connect-telegram?lang=zh-CN")).toBe(true);
+  });
+
+  it("shows a readable data error instead of 404 when the radar query fails", async () => {
+    const fromMock = vi
+      .fn()
+      .mockImplementationOnce(() => makeQuery({ data: { locale: "en" }, error: null }))
+      .mockImplementationOnce(() => makeQuery({ data: null, error: { message: "database unavailable" } }))
+      .mockImplementationOnce(() => makeQuery({ data: null, error: null }));
+    createServerClientMock.mockReturnValue({
+      auth: {
+        getUser: vi.fn().mockResolvedValue({
+          data: { user: { id: "user-1", email: "test@example.com", user_metadata: {} } },
+        }),
+      },
+      from: fromMock,
+    });
+
+    const page = await RadarDetailPage({
+      params: Promise.resolve({ id: "8a4a2cf8-02b9-4c68-8f33-0f5f160f1a42" }),
+      searchParams: Promise.resolve({}),
+    });
+
+    render(page as ReactElement);
+    expect(screen.getByRole("alert")).toHaveTextContent("Some live details could not be loaded. Refresh and try again.");
+    expect(notFoundMock).not.toHaveBeenCalled();
   });
 });

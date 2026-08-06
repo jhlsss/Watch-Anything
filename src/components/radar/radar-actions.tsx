@@ -53,6 +53,7 @@ const actionCopy = {
 
 export function WorkspaceNavigation({ locale, currentPath }: { locale: Locale; currentPath: string }) {
   const labels = navigationCopy[locale];
+  const localizedHref = (href: string) => `${href}?lang=${locale}`;
   const items = [
     { href: "/dashboard", label: labels.dashboard, icon: LayoutDashboard, active: currentPath === "/dashboard" },
     {
@@ -68,7 +69,7 @@ export function WorkspaceNavigation({ locale, currentPath }: { locale: Locale; c
     <>
       <aside className="hidden w-60 shrink-0 bg-slate-950 text-white min-[850px]:block">
         <div className="sticky top-0 flex min-h-screen flex-col px-4 py-6">
-          <Link href="/dashboard" className="flex items-center gap-3 px-3 text-sm font-semibold text-white">
+          <Link href={localizedHref("/dashboard")} className="flex items-center gap-3 px-3 text-sm font-semibold text-white">
             <span className="grid h-8 w-8 place-items-center rounded-xl bg-violet-500 text-white">
               <RadarIcon className="h-4 w-4" aria-hidden="true" />
             </span>
@@ -78,7 +79,7 @@ export function WorkspaceNavigation({ locale, currentPath }: { locale: Locale; c
             {items.map(({ href, label, icon: Icon, active }) => (
               <Link
                 key={href}
-                href={href}
+                href={localizedHref(href)}
                 className={
                   active
                     ? "flex items-center gap-3 rounded-2xl bg-white/10 px-3 py-3 text-sm font-semibold text-white"
@@ -98,7 +99,7 @@ export function WorkspaceNavigation({ locale, currentPath }: { locale: Locale; c
           {items.map(({ href, label, icon: Icon, active }) => (
             <Link
               key={href}
-              href={href}
+              href={localizedHref(href)}
               className={
                 active
                   ? "flex min-h-12 flex-col items-center justify-center gap-1 rounded-2xl bg-violet-50 px-2 py-1 text-xs font-semibold text-violet-700"
@@ -137,10 +138,6 @@ export function WorkspaceLocaleSwitcher({
 
     setError(false);
     setIsSaving(true);
-    // The locale preference is intentionally persisted outside React state so the next server render can read it.
-    // eslint-disable-next-line react-hooks/immutability
-    document.cookie = `wa_locale=${nextLocale}; Path=/; Max-Age=31536000; SameSite=Lax`;
-
     try {
       const supabase = createClient();
       const result = await supabase.from("profiles").update({ locale: nextLocale }).eq("id", userId);
@@ -155,6 +152,9 @@ export function WorkspaceLocaleSwitcher({
       return;
     }
 
+    // The locale preference is intentionally persisted outside React state so the next server render can read it.
+    // eslint-disable-next-line react-hooks/immutability
+    document.cookie = `wa_locale=${nextLocale}; Path=/; Max-Age=31536000; SameSite=Lax`;
     router.push(`${path}?lang=${nextLocale}`);
   };
 
@@ -217,9 +217,9 @@ export function RadarActions({
 
     try {
       const response = await fetch(`/api/radars/${radarId}`, init);
-      const body = await response.json().catch(() => null) as { code?: string } | null;
+      const body = await response.json().catch(() => null) as { error?: string } | null;
       if (!response.ok) {
-        setError(body?.code === "ACTIVE_RADAR_LIMIT_REACHED" ? labels.limitError : labels.actionError);
+        setError(body?.error === "ACTIVE_RADAR_LIMIT_REACHED" ? labels.limitError : labels.actionError);
         return false;
       }
 
@@ -239,9 +239,9 @@ export function RadarActions({
 
     try {
       const response = await fetch(`/api/radars/${radarId}/run`, { method: "POST" });
-      const body = await response.json().catch(() => null) as { code?: string } | null;
+      const body = await response.json().catch(() => null) as { error?: string } | null;
       if (!response.ok) {
-        setError(body?.code === "ACTIVE_RADAR_LIMIT_REACHED" ? labels.limitError : labels.actionError);
+        setError(body?.error === "ACTIVE_RADAR_LIMIT_REACHED" ? labels.limitError : labels.actionError);
         return;
       }
 
