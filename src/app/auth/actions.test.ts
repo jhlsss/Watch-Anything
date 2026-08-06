@@ -267,7 +267,7 @@ describe("Auth rule restoration helpers", () => {
   });
 });
 
-describe("parse route quota claim", () => {
+describe("parse route", () => {
   beforeEach(() => {
     vi.stubEnv("NODE_ENV", "production");
     createAdminClientMock.mockReturnValue({
@@ -277,23 +277,6 @@ describe("parse route quota claim", () => {
       }),
     });
     parseRulesMock.mockReset();
-  });
-
-  it("uses the atomic guest quota RPC and returns 429 when it denies", async () => {
-    const admin = createAdminClientMock();
-    const request = new NextRequest("http://localhost/api/rules/parse", {
-      method: "POST",
-      body: JSON.stringify({ prompt: "Track LISA releases", locale: "en" }),
-      headers: { "Content-Type": "application/json" },
-    });
-
-    const response = await parseRulesPost(request);
-
-    expect(response.status).toBe(429);
-    expect(admin.rpc).toHaveBeenCalledWith("claim_guest_ai_request", {
-      p_identity_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
-    });
-    expect(parseRulesMock).not.toHaveBeenCalled();
   });
 
   it("does not let an exhausted production quota block local rule parsing", async () => {
@@ -313,29 +296,20 @@ describe("parse route quota claim", () => {
     await expect(response.json()).resolves.toMatchObject({ rules: validRules });
   });
 
-  it("releases the guest quota claim when rule parsing fails", async () => {
-    const rpc = vi
-      .fn()
-      .mockResolvedValueOnce({
-        data: { allowed: true, identity_count: 1, global_count: 1 },
-        error: null,
-      })
-      .mockResolvedValueOnce({ data: true, error: null });
-    createAdminClientMock.mockReturnValue({ rpc });
-    parseRulesMock.mockRejectedValueOnce(new Error("AI provider unavailable"));
-
+  it("does not apply the guest quota to production rule parsing", async () => {
+    const admin = createAdminClientMock();
+    parseRulesMock.mockResolvedValueOnce(validRules);
     const request = new NextRequest("http://localhost/api/rules/parse", {
       method: "POST",
-      body: JSON.stringify({ prompt: "Track company announcements", locale: "en" }),
+      body: JSON.stringify({ prompt: "Track long-form company announcements", locale: "en" }),
       headers: { "Content-Type": "application/json" },
     });
 
     const response = await parseRulesPost(request);
 
-    expect(response.status).toBe(502);
-    expect(rpc).toHaveBeenNthCalledWith(2, "release_guest_ai_request", {
-      p_identity_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
-    });
+    expect(response.status).toBe(200);
+    expect(admin.rpc).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({ rules: validRules });
   });
 
   afterEach(() => {
