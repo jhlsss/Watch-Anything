@@ -92,3 +92,44 @@ Per the Task 2 brief, I did not modify those later-task callers.
 ## Concerns / follow-up
 
 The repository-wide test command cannot pass until later migration tasks update old Groq callers and tests. This is expected intermediate breakage for Task 2 and was not fixed here to avoid expanding scope.
+
+## Review fix: shared 429 retry budget
+
+The reviewer identified that the initial structured request and invalid-response repair each created an independent 429 retry budget. The fix creates one budget per `createStructuredOutput` call and passes it through both completion attempts. The existing `retry-after-ms` and `retry-after` delay handling and generic `AI_RATE_LIMITED` mapping are unchanged.
+
+Added focused coverage for:
+
+- A mixed initial-429, invalid-response, repair-429 sequence, proving the repair 429 is not retried and the call makes exactly three provider requests.
+- `createGeminiClient()` resolving `GEMINI_API_KEY` through `parseServerEnv` without logging the credential.
+
+TDD evidence for the review fix:
+
+RED:
+
+```bash
+pnpm vitest run src/lib/ai/schemas.test.ts
+```
+
+Result: failed as expected because the mixed-sequence regression resolved after a fourth provider request instead of rejecting with `AI_RATE_LIMITED`.
+
+GREEN:
+
+```bash
+pnpm vitest run src/lib/ai/schemas.test.ts
+```
+
+Result: passed, 1 test file / 8 tests.
+
+Task-scoped verification after the fix:
+
+```bash
+pnpm lint
+```
+
+Passed with exit 0.
+
+```bash
+pnpm test
+```
+
+Failed with the expected migration-boundary failures: 7 files failed, 14 tests failed, 132 passed, and 2 were skipped. Failures remain in later Groq callers/tests importing `groq-sdk`, calling removed `resolveGroqModel`, or asserting legacy `GROQ_*` behavior. No later-task callers were changed.

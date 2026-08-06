@@ -322,15 +322,22 @@ function rateLimitRetryDelayMs(error: { headers?: Headers }): number {
   return 1_000;
 }
 
+type RateLimitRetryBudget = {
+  remaining: number;
+};
+
 async function runStructuredCompletionWithRateLimitRetry<T>(
   options: Parameters<typeof runStructuredCompletion<T>>[0],
+  rateLimitRetryBudget: RateLimitRetryBudget,
 ): Promise<T> {
   try {
     return await runStructuredCompletion(options);
   } catch (error) {
-    if (!isRateLimitError(error)) {
+    if (!isRateLimitError(error) || rateLimitRetryBudget.remaining <= 0) {
       throw error;
     }
+
+    rateLimitRetryBudget.remaining -= 1;
 
     await new Promise((resolve) => {
       setTimeout(resolve, rateLimitRetryDelayMs(error));
@@ -359,6 +366,8 @@ export async function createStructuredOutput<T>({
   maxCompletionTokens?: number;
   requestOptions?: AiRequestOptions;
 }): Promise<T> {
+  const rateLimitRetryBudget: RateLimitRetryBudget = { remaining: 1 };
+
   try {
     return await runStructuredCompletionWithRateLimitRetry({
       ai,
@@ -369,7 +378,7 @@ export async function createStructuredOutput<T>({
       validator,
       maxCompletionTokens,
       requestOptions,
-    });
+    }, rateLimitRetryBudget);
   } catch (error) {
     if (isRateLimitError(error)) {
       throw rateLimitedError();
@@ -399,7 +408,7 @@ export async function createStructuredOutput<T>({
         validator,
         maxCompletionTokens,
         requestOptions,
-      });
+      }, rateLimitRetryBudget);
     } catch (retryError) {
       if (isRateLimitError(retryError)) {
         throw rateLimitedError();

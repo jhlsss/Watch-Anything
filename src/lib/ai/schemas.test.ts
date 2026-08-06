@@ -59,6 +59,23 @@ describe("Gemini OpenAI-compatible client", () => {
     });
   });
 
+  it("reads GEMINI_API_KEY from server env when no explicit key is supplied without logging it", () => {
+    stubCompleteServerEnv();
+    const consoleError = vi.spyOn(console, "error");
+    const consoleLog = vi.spyOn(console, "log");
+    const consoleWarn = vi.spyOn(console, "warn");
+
+    createGeminiClient();
+
+    expect(openAiConstructor).toHaveBeenCalledExactlyOnceWith({
+      apiKey: "gemini-env-key",
+      baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+    });
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(consoleLog).not.toHaveBeenCalled();
+    expect(consoleWarn).not.toHaveBeenCalled();
+  });
+
   it("resolves the Gemini model from the server environment", () => {
     stubCompleteServerEnv();
 
@@ -219,6 +236,63 @@ describe("createStructuredOutput", () => {
     await vi.runAllTimersAsync();
     await expectation;
     expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  it("shares one HTTP 429 retry budget across initial and repair attempts", async () => {
+    vi.useFakeTimers();
+    const rateLimitError = Object.assign(new Error("HTTP 429"), {
+      status: 429,
+      headers: new Headers({ "retry-after-ms": "0" }),
+    });
+    const create = vi
+      .fn()
+      .mockRejectedValueOnce(rateLimitError)
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({ answer: 123 }),
+            },
+          },
+        ],
+      })
+      .mockRejectedValueOnce(rateLimitError)
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({ answer: "should-not-retry" }),
+            },
+          },
+        ],
+      });
+    const ai: AiLike = {
+      chat: {
+        completions: { create },
+      },
+    };
+
+    const resultPromise = createStructuredOutput({
+      ai,
+      model: "gemini-test-model",
+      schemaName: "test_schema",
+      jsonSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["answer"],
+        properties: { answer: { type: "string" } },
+      },
+      messages: [{ role: "user", content: "Return an answer." }],
+      validator: z.object({ answer: z.string() }),
+    });
+
+    const expectation = expect(resultPromise).rejects.toMatchObject({
+      code: "AI_RATE_LIMITED",
+    } satisfies Partial<AiAdapterError>);
+
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(create).toHaveBeenCalledTimes(3);
   });
 });
 
