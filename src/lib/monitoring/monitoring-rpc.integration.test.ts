@@ -238,6 +238,35 @@ describe("monitoring migration contract", () => {
     expect(manualRunRoute).toContain("outerDeadlineAt");
   });
 
+  it("recovers a stale source-success run as failed with a 15-minute retry", () => {
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "supabase/migrations/202608060002_monitoring_functions.sql",
+      ),
+      "utf8",
+    )
+      .replace(/--.*$/gm, "")
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+    const claimStart = migration.indexOf(
+      "create or replace function public.claim_radar_run",
+    );
+    const claimBody = migration.slice(
+      claimStart,
+      migration.indexOf("$$;", claimStart),
+    );
+
+    expect(claimBody).toContain("recovered_status := 'failed'");
+    expect(claimBody).toContain(
+      "next_check_at = clock_timestamp() + interval '15 minutes'",
+    );
+    expect(claimBody).not.toMatch(
+      /recovered_status := case[\s\S]*source_success_count/u,
+    );
+    expect(claimBody).not.toContain("clock_timestamp() + interval '6 hours'");
+  });
+
   it("rechecks setup and recovery leases with wall-clock time after locks", () => {
     const migration = readFileSync(
       resolve(

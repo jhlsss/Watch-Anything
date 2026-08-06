@@ -334,18 +334,7 @@ begin
      order by rr.started_at, rr.id
      for update
   loop
-    recovered_status := case
-      when coalesce(stale_run.source_success_count, 0) >= 1
-        or exists (
-          select 1
-            from jsonb_array_elements(
-              coalesce(stale_run.source_outcomes, '[]'::jsonb)
-            ) outcome
-           where outcome ->> 'success' = 'true'
-        )
-        then 'success'
-      else 'failed'
-    end;
+    recovered_status := 'failed';
     recovered_run_id := null;
 
     update public.radar_runs
@@ -364,10 +353,7 @@ begin
          set lease_owner = null,
              lease_expires_at = null,
              last_checked_at = timezone('utc', clock_timestamp()),
-             next_check_at = case
-               when recovered_status = 'failed' then clock_timestamp() + interval '15 minutes'
-               else clock_timestamp() + interval '6 hours'
-             end,
+             next_check_at = clock_timestamp() + interval '15 minutes',
              updated_at = timezone('utc', clock_timestamp())
        where id = p_radar_id
          and lease_expires_at is not null
