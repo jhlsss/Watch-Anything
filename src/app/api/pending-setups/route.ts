@@ -1,5 +1,17 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
+import {
+  createRadarFromSetup,
+  getMonitoringClient,
+  MonitoringError,
+  toPublicRadar,
+  toPublicRunResult,
+} from "@/lib/monitoring/create-radar";
+import {
+  MONITORING_ROUTE_BUDGET_MS,
+  runRadar,
+} from "@/lib/monitoring/run-radar";
 import { createClient as createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { hashRuleToken, verifyRuleToken } from "@/lib/security/rule-token";
@@ -13,6 +25,8 @@ const SETUP_COOKIE = "wa_setup";
 const SETUP_MAX_AGE = 60 * 60 * 24;
 type PendingSetupAdmin = ReturnType<typeof createAdminClient>;
 
+export const maxDuration = 60;
+
 function setupCookieOptions() {
   return {
     httpOnly: true,
@@ -21,6 +35,20 @@ function setupCookieOptions() {
     maxAge: SETUP_MAX_AGE,
     path: "/",
   };
+}
+
+function activationErrorResponse(error: unknown): NextResponse {
+  const code = error instanceof MonitoringError ? error.code : "RADAR_REQUEST_FAILED";
+  const status =
+    code === "ACTIVE_RADAR_LIMIT_REACHED"
+      ? 409
+      : code === "TELEGRAM_NOT_CONNECTED" || code === "SETUP_NOT_AVAILABLE"
+        ? 400
+        : code === "CREATE_DEADLINE_EXCEEDED"
+          ? 504
+          : 500;
+
+  return NextResponse.json({ error: code }, { status });
 }
 
 async function getCurrentUser() {
@@ -176,6 +204,71 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     console.error("Pending setup creation failed.", error);
     return NextResponse.json({ error: "PENDING_SETUP_FAILED" }, { status: 500 });
+  }
+
+  const connection = await admin
+    .from("telegram_connections")
+    .select("user_id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (connection.error) {
+    console.error("Telegram connection lookup failed.", connection.error);
+    return NextResponse.json({ error: "TELEGRAM_STATUS_FAILED" }, { status: 503 });
+  }
+
+  if (connection.data) {
+    const outerDeadlineAt = Date.now() + MONITORING_ROUTE_BUDGET_MS;
+    const db = getMonitoringClient(
+      admin as unknown as Parameters<typeof getMonitoringClient>[0],
+    );
+    let createdRadar: Awaited<ReturnType<typeof createRadarFromSetup>>;
+
+    try {
+      createdRadar = await createRadarFromSetup(
+        setup.id,
+        user.id,
+        outerDeadlineAt,
+        db,
+      );
+    } catch (error) {
+      return activationErrorResponse(error);
+    }
+
+    const cookieStore = await cookies();
+    cookieStore.delete(SETUP_COOKIE);
+
+    try {
+      const run = await runRadar(createdRadar.id, "baseline", {
+        client: db,
+        outerDeadlineAt,
+      });
+
+      return NextResponse.json(
+        {
+          next: "radar",
+          radarId: createdRadar.id,
+          radar: toPublicRadar(createdRadar as unknown as Record<string, unknown>),
+          run: toPublicRunResult(run),
+        },
+        { status: 201 },
+      );
+    } catch (error) {
+      const baselineError =
+        error instanceof MonitoringError ? error.code : "BASELINE_FAILED";
+
+      return NextResponse.json(
+        {
+          next: "radar",
+          radarId: createdRadar.id,
+          radar: toPublicRadar(createdRadar as unknown as Record<string, unknown>),
+          run: null,
+          error: baselineError,
+          baselineError,
+        },
+        { status: 201 },
+      );
+    }
   }
 
   const response = NextResponse.json({ next: "connect-telegram" });

@@ -87,14 +87,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
   }
 
-  let input: unknown;
+  const cookieStore = await cookies();
+  let input: unknown = null;
   try {
     input = await request.json();
   } catch {
-    return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
+    // The activation page can rely on the HttpOnly setup cookie and submit an
+    // empty body. A malformed or absent body is therefore resolved from the
+    // cookie below instead of exposing the setup id to browser JavaScript.
   }
 
-  const parsed = setupIdSchema.safeParse(input);
+  const bodySetupId =
+    input && typeof input === "object" && "setupId" in input
+      ? (input as { setupId?: unknown }).setupId
+      : undefined;
+  const parsed = setupIdSchema.safeParse({
+    setupId: bodySetupId ?? cookieStore.get("wa_setup")?.value,
+  });
   if (!parsed.success) {
     return NextResponse.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
@@ -116,7 +125,6 @@ export async function POST(request: Request) {
         ),
       outerDeadlineAt,
     );
-    const cookieStore = await cookies();
     cookieStore.delete("wa_setup");
     try {
       const run = await runRadar(createdRadar.id, "baseline", {
