@@ -279,16 +279,32 @@ async function updateNotification(
   client: MonitoringClient,
   notificationId: string,
   values: Record<string, unknown>,
+  deadlineAt?: number,
 ): Promise<boolean> {
-  const result = await client
-    .from("notifications")
-    .update(values)
-    .eq("id", notificationId)
-    .eq("status", "sending")
-    .select("id")
-    .maybeSingle();
+  try {
+    const result = await withNotificationDeadline(
+      client
+        .from("notifications")
+        .update(values)
+        .eq("id", notificationId)
+        .eq("status", "sending")
+        .select("id")
+        .maybeSingle(),
+      deadlineAt,
+    );
 
-  return !result.error && Boolean(result.data);
+    return !result.error && Boolean(result.data);
+  } catch (error) {
+    if (
+      deadlineAt !== undefined &&
+      error instanceof MonitoringError &&
+      error.code === "RUN_DEADLINE_EXCEEDED"
+    ) {
+      return false;
+    }
+
+    throw error;
+  }
 }
 
 async function finishPreparationFailure(
@@ -296,13 +312,27 @@ async function finishPreparationFailure(
   notificationId: string,
   status: "failed" | "unknown",
   errorCode: string,
+  deadlineAt?: number,
 ): Promise<NotificationSendResult> {
-  const updated = await updateNotification(client, notificationId, {
-    status,
-    error_code: errorCode,
-  });
+  const updated = await updateNotification(
+    client,
+    notificationId,
+    {
+      status,
+      error_code: errorCode,
+    },
+    deadlineAt,
+  );
 
   if (!updated) {
+    if (deadlineAt !== undefined && Date.now() >= deadlineAt) {
+      return {
+        notificationId,
+        status,
+        errorCode,
+      };
+    }
+
     throw new MonitoringError(
       "DATABASE_ERROR",
       "Notification status could not be updated after preparation failure.",
@@ -354,6 +384,7 @@ export async function sendPendingNotification(
       error instanceof MonitoringError && error.code === "RUN_DEADLINE_EXCEEDED"
         ? "RUN_DEADLINE_EXCEEDED"
         : "NOTIFICATION_PREPARATION_FAILED",
+      dependencies.deadlineAt,
     );
   }
 
@@ -379,6 +410,7 @@ export async function sendPendingNotification(
       error instanceof MonitoringError && error.code === "RUN_DEADLINE_EXCEEDED"
         ? "RUN_DEADLINE_EXCEEDED"
         : "NOTIFICATION_PREPARATION_FAILED",
+      dependencies.deadlineAt,
     );
   }
 
@@ -388,6 +420,7 @@ export async function sendPendingNotification(
       notificationId,
       "unknown",
       "NOTIFICATION_PREPARATION_FAILED",
+      dependencies.deadlineAt,
     );
   }
 
@@ -397,6 +430,7 @@ export async function sendPendingNotification(
       notificationId,
       "failed",
       "TELEGRAM_NOT_CONNECTED",
+      dependencies.deadlineAt,
     );
   }
 
@@ -409,18 +443,28 @@ export async function sendPendingNotification(
       }),
       dependencies.deadlineAt,
     );
-    const updated = await updateNotification(db, notificationId, {
-      status: "sent",
-      telegram_message_id: sentMessage.message_id,
-      sent_at: new Date().toISOString(),
-      error_code: null,
-    });
+    const updated = await updateNotification(
+      db,
+      notificationId,
+      {
+        status: "sent",
+        telegram_message_id: sentMessage.message_id,
+        sent_at: new Date().toISOString(),
+        error_code: null,
+      },
+      dependencies.deadlineAt,
+    );
 
     if (!updated) {
-      await updateNotification(db, notificationId, {
-        status: "unknown",
-        error_code: "NOTIFICATION_STATUS_UNKNOWN",
-      });
+      await updateNotification(
+        db,
+        notificationId,
+        {
+          status: "unknown",
+          error_code: "NOTIFICATION_STATUS_UNKNOWN",
+        },
+        dependencies.deadlineAt,
+      );
       return {
         notificationId,
         status: "unknown",
@@ -444,12 +488,25 @@ export async function sendPendingNotification(
       errorCode === "RUN_DEADLINE_EXCEEDED"
         ? "unknown"
         : "failed";
-    const updated = await updateNotification(db, notificationId, {
-      status,
-      error_code: errorCode,
-    });
+    const updated = await updateNotification(
+      db,
+      notificationId,
+      {
+        status,
+        error_code: errorCode,
+      },
+      dependencies.deadlineAt,
+    );
 
     if (!updated) {
+      if (dependencies.deadlineAt !== undefined && Date.now() >= dependencies.deadlineAt) {
+        return {
+          notificationId,
+          status,
+          errorCode,
+        };
+      }
+
       throw new MonitoringError(
         "DATABASE_ERROR",
         "Notification status could not be updated after delivery failure.",

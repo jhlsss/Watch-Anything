@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { getMonitoringClient, MonitoringError } from "@/lib/monitoring/create-radar";
-import { runRadar } from "@/lib/monitoring/run-radar";
+import {
+  MONITORING_ROUTE_BUDGET_MS,
+  runRadar,
+} from "@/lib/monitoring/run-radar";
 import { createClient as createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createSessionClient } from "@/lib/supabase/server";
 
@@ -34,6 +37,7 @@ function runErrorResponse(error: unknown): NextResponse {
 }
 
 export async function POST(_request: Request, { params }: RouteContext) {
+  const outerDeadlineAt = Date.now() + MONITORING_ROUTE_BUDGET_MS;
   const { id } = await params;
   if (!isUuid(id)) {
     return NextResponse.json({ error: "RADAR_NOT_FOUND" }, { status: 404 });
@@ -62,7 +66,10 @@ export async function POST(_request: Request, { params }: RouteContext) {
     createAdminClient() as unknown as Parameters<typeof getMonitoringClient>[0],
   );
   try {
-    const run = await runRadar(id, "manual", { client: db });
+    const run = await runRadar(id, "manual", {
+      client: db,
+      outerDeadlineAt,
+    });
     return NextResponse.json({ run });
   } catch (error) {
     return runErrorResponse(error);

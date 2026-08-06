@@ -7,7 +7,11 @@ import {
   getMonitoringClient,
   MonitoringError,
 } from "@/lib/monitoring/create-radar";
-import { runRadar } from "@/lib/monitoring/run-radar";
+import {
+  MONITORING_ROUTE_BUDGET_MS,
+  runRadar,
+  withMonitoringDeadline,
+} from "@/lib/monitoring/run-radar";
 import { createClient as createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createSessionClient } from "@/lib/supabase/server";
 import type { RunResult } from "@/types/contracts";
@@ -110,6 +114,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const outerDeadlineAt = Date.now() + MONITORING_ROUTE_BUDGET_MS;
   const user = await getAuthenticatedUser();
   if (!user) {
     return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
@@ -132,10 +137,16 @@ export async function POST(request: Request) {
   );
 
   try {
-    const radar = await createRadarFromSetup(parsed.data.setupId, user.id, db);
+    const radar = await withMonitoringDeadline(
+      createRadarFromSetup(parsed.data.setupId, user.id, db),
+      outerDeadlineAt,
+    );
     const cookieStore = await cookies();
     cookieStore.delete("wa_setup");
-    const run = await runRadar(radar.id, "baseline", { client: db });
+    const run = await runRadar(radar.id, "baseline", {
+      client: db,
+      outerDeadlineAt,
+    });
 
     return NextResponse.json(
       { radar: toPublicRadar(radar), run: toPublicRun(run) },

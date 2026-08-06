@@ -557,6 +557,8 @@ declare
   threshold integer;
   first_seen boolean;
   current_eligible boolean;
+  finding_found boolean;
+  lease_cas_id uuid;
 begin
   select rr.radar_id
     into radar_id_for_run
@@ -580,10 +582,23 @@ begin
      and rr.radar_id = radar_id_for_run
      and rr.status = 'running'
      and rr.lease_owner = p_lease_owner
-     and rr.lease_expires_at > now()
+     and rr.lease_expires_at > clock_timestamp()
    for update;
 
   if not found then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  update public.radar_runs
+     set lease_expires_at = lease_expires_at
+   where id = p_run_id
+     and radar_id = radar_id_for_run
+     and status = 'running'
+     and lease_owner = p_lease_owner
+     and lease_expires_at > clock_timestamp()
+  returning id into lease_cas_id;
+
+  if lease_cas_id is null then
     raise exception 'RUN_NOT_CLAIMED';
   end if;
 
@@ -595,8 +610,22 @@ begin
    where f.radar_id = radar_id_for_run
      and f.fingerprint = p_fingerprint
    for update;
+  finding_found := found;
 
-  if found then
+  update public.radar_runs
+     set lease_expires_at = lease_expires_at
+   where id = p_run_id
+     and radar_id = radar_id_for_run
+     and status = 'running'
+     and lease_owner = p_lease_owner
+     and lease_expires_at > clock_timestamp()
+  returning id into lease_cas_id;
+
+  if lease_cas_id is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  if finding_found then
     first_seen := finding_row.first_seen_during_baseline;
     current_eligible := not first_seen
       and p_source_was_baselined
@@ -657,6 +686,19 @@ begin
       first_seen
     )
     returning * into finding_row;
+  end if;
+
+  update public.radar_runs
+     set lease_expires_at = lease_expires_at
+   where id = p_run_id
+     and radar_id = radar_id_for_run
+     and status = 'running'
+     and lease_owner = p_lease_owner
+     and lease_expires_at > clock_timestamp()
+  returning id into lease_cas_id;
+
+  if lease_cas_id is null then
+    raise exception 'RUN_NOT_CLAIMED';
   end if;
 
   insert into public.run_findings (
@@ -723,6 +765,7 @@ declare
   finding_row public.findings%rowtype;
   notification_row public.notifications%rowtype;
   dedupe_key_value text;
+  lease_cas_id uuid;
 begin
   select rr.radar_id
     into radar_id_for_run
@@ -746,10 +789,23 @@ begin
      and rr.radar_id = radar_id_for_run
      and rr.status = 'running'
      and rr.lease_owner = p_lease_owner
-     and rr.lease_expires_at > now()
+     and rr.lease_expires_at > clock_timestamp()
    for update;
 
   if not found then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
+  update public.radar_runs
+     set lease_expires_at = lease_expires_at
+   where id = p_run_id
+     and radar_id = radar_id_for_run
+     and status = 'running'
+     and lease_owner = p_lease_owner
+     and lease_expires_at > clock_timestamp()
+  returning id into lease_cas_id;
+
+  if lease_cas_id is null then
     raise exception 'RUN_NOT_CLAIMED';
   end if;
 
@@ -762,6 +818,19 @@ begin
 
   if not found then
     raise exception 'FINDING_NOT_FOUND';
+  end if;
+
+  update public.radar_runs
+     set lease_expires_at = lease_expires_at
+   where id = p_run_id
+     and radar_id = radar_id_for_run
+     and status = 'running'
+     and lease_owner = p_lease_owner
+     and lease_expires_at > clock_timestamp()
+  returning id into lease_cas_id;
+
+  if lease_cas_id is null then
+    raise exception 'RUN_NOT_CLAIMED';
   end if;
 
   dedupe_key_value := coalesce(nullif(btrim(finding_row.event_key), ''), finding_row.fingerprint);
@@ -831,6 +900,8 @@ as $$
 declare
   radar_id_for_run uuid;
   completed_id uuid;
+  source_lock_id uuid;
+  lease_cas_id uuid;
 begin
   select rr.radar_id
     into radar_id_for_run
@@ -852,20 +923,70 @@ begin
      and rr.radar_id = radar_id_for_run
      and rr.status = 'running'
      and rr.lease_owner = p_lease_owner
-     and rr.lease_expires_at > now()
+     and rr.lease_expires_at > clock_timestamp()
    for update;
 
   if not found then
     raise exception 'RUN_NOT_CLAIMED';
   end if;
 
+  update public.radar_runs
+     set lease_expires_at = lease_expires_at
+   where id = p_run_id
+     and radar_id = radar_id_for_run
+     and status = 'running'
+     and lease_owner = p_lease_owner
+     and lease_expires_at > clock_timestamp()
+  returning id into lease_cas_id;
+
+  if lease_cas_id is null then
+    raise exception 'RUN_NOT_CLAIMED';
+  end if;
+
   if p_source_key = 'tavily' then
+    update public.radar_runs
+       set lease_expires_at = lease_expires_at
+     where id = p_run_id
+       and radar_id = radar_id_for_run
+       and status = 'running'
+       and lease_owner = p_lease_owner
+       and lease_expires_at > clock_timestamp()
+    returning id into lease_cas_id;
+
+    if lease_cas_id is null then
+      raise exception 'RUN_NOT_CLAIMED';
+    end if;
+
     update public.radars
        set tavily_baseline_completed_at = p_completed_at,
            updated_at = timezone('utc', now())
      where id = radar_id_for_run
     returning id into completed_id;
   elsif p_source_key = 'music_news_rss' then
+    select rs.id
+      into source_lock_id
+      from public.radar_sources rs
+     where rs.radar_id = radar_id_for_run
+       and rs.source_key = 'music_news_rss'
+     for update;
+
+    if source_lock_id is null then
+      raise exception 'RUN_NOT_CLAIMED';
+    end if;
+
+    update public.radar_runs
+       set lease_expires_at = lease_expires_at
+     where id = p_run_id
+       and radar_id = radar_id_for_run
+       and status = 'running'
+       and lease_owner = p_lease_owner
+       and lease_expires_at > clock_timestamp()
+    returning id into lease_cas_id;
+
+    if lease_cas_id is null then
+      raise exception 'RUN_NOT_CLAIMED';
+    end if;
+
     update public.radar_sources
        set baseline_completed_at = p_completed_at,
            last_error = null,
@@ -873,6 +994,11 @@ begin
      where radar_id = radar_id_for_run
        and source_key = 'music_news_rss'
     returning id into completed_id;
+
+    if completed_id is null then
+      raise exception 'RUN_NOT_CLAIMED';
+    end if;
+
   else
     raise exception 'INVALID_SOURCE_KEY';
   end if;

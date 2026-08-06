@@ -14,6 +14,7 @@ import type {
   MonitoringQuery,
 } from "@/lib/monitoring/create-radar";
 import { executeClaimedRun, runRadar } from "@/lib/monitoring/run-radar";
+import type { GroqLike } from "@/lib/ai/schemas";
 import type { Candidate, RadarRules } from "@/types/contracts";
 import { resolveRunStatus } from "@/lib/monitoring/run-status";
 import type { SourceOutcome } from "@/types/contracts";
@@ -410,6 +411,7 @@ class MonitoringFakeClient implements MonitoringClient {
   terminalRunUpdateRows = true;
   radarUpdateRows = true;
   terminalUpdateFailures = 0;
+  terminalUpdateDelayMs = 0;
   sourcePersistenceFailures = 0;
   persistFindingRpcError: string | null = null;
   tavilyBaselineCompletedAt: string | null = null;
@@ -519,7 +521,20 @@ class MonitoringFakeClient implements MonitoringClient {
       in: () => query,
       order: () => query,
       limit: () => query,
-      maybeSingle: () => Promise.resolve(resolve()),
+      maybeSingle: () => {
+        const result = resolve();
+        if (
+          this.terminalUpdateDelayMs > 0 &&
+          table === "radar_runs" &&
+          operation === "update" &&
+          "status" in payload
+        ) {
+          return new Promise((resolveDelayed) => {
+            setTimeout(() => resolveDelayed(result), this.terminalUpdateDelayMs);
+          });
+        }
+        return Promise.resolve(result);
+      },
       single: () => Promise.resolve(resolve()),
       insert: (values: unknown) => {
         operation = "insert";
@@ -811,6 +826,79 @@ describe("run pipeline", () => {
     expect(client.findingInserts).toHaveLength(1);
   });
 
+  it("passes the remaining budget, abort signal, and zero retries to production Groq", async () => {
+    const client = new MonitoringFakeClient();
+    const requestOptions: {
+      signal: AbortSignal;
+      timeout: number;
+      maxRetries: number;
+    }[] = [];
+    const create = vi.fn(
+      async (
+        _request: Record<string, unknown>,
+        options: {
+          signal: AbortSignal;
+          timeout: number;
+          maxRetries: number;
+        },
+      ) => {
+        requestOptions.push(options);
+        return new Promise<never>((_, reject) => {
+          options.signal.addEventListener(
+            "abort",
+            () => reject(new Error("provider aborted")),
+            { once: true },
+          );
+        });
+      },
+    );
+    const groq = {
+      chat: {
+        completions: {
+          create,
+        },
+      },
+    } as unknown as GroqLike;
+
+    for (const [name, value] of Object.entries({
+      SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+      CRON_SECRET: "cron-secret",
+      RULE_TOKEN_SECRET: "r".repeat(32),
+      TAVILY_API_KEY: "tavily-key",
+      GROQ_API_KEY: "groq-key",
+      GROQ_MODEL: "test-model",
+      TELEGRAM_BOT_TOKEN: "telegram-token",
+      TELEGRAM_BOT_USERNAME: "telegram-user",
+      TELEGRAM_WEBHOOK_SECRET: "telegram-secret",
+    })) {
+      vi.stubEnv(name, value);
+    }
+
+    try {
+      await expect(
+        runRadar("radar-1", "baseline", {
+          client,
+          groq,
+          aiTimeoutMs: 20,
+          searchTavily: async () => [testCandidate],
+          fetchRss: async () => [],
+        }),
+      ).resolves.toMatchObject({ status: "success" });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(requestOptions[0]).toMatchObject({
+      maxRetries: 0,
+      signal: expect.any(AbortSignal),
+      timeout: expect.any(Number),
+    });
+    expect(requestOptions[0]?.timeout).toBeGreaterThan(0);
+    expect(requestOptions[0]?.timeout).toBeLessThanOrEqual(20);
+    expect(requestOptions[0]?.signal.aborted).toBe(true);
+  });
+
   it("does not write a Finding when the lease-safe persistence RPC loses the lease", async () => {
     const client = new MonitoringFakeClient();
     client.persistFindingRpcError = "RUN_NOT_CLAIMED";
@@ -904,5 +992,22 @@ describe("run pipeline", () => {
       lease_owner: null,
       lease_expires_at: null,
     });
+  });
+
+  it("bounds recovery terminal cleanup by the remaining lease budget", async () => {
+    const client = new MonitoringFakeClient();
+    client.runLeaseExpiresAt = new Date(Date.now() + 50).toISOString();
+    client.terminalUpdateDelayMs = 1_000;
+    const startedAt = Date.now();
+
+    await expect(
+      executeClaimedRun("run-1", "claim-owner", {
+        client,
+        searchTavily: () => new Promise<Candidate[]>(() => undefined),
+        fetchRss: async () => [],
+      }),
+    ).rejects.toMatchObject({ code: "RUN_DEADLINE_EXCEEDED" });
+
+    expect(Date.now() - startedAt).toBeLessThan(500);
   });
 });

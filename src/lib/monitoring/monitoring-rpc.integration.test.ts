@@ -68,17 +68,33 @@ describe("monitoring migration contract", () => {
       /create or replace function public\.persist_run_finding\(.*p_run_id uuid.*p_lease_owner uuid/,
     );
     expect(migration).toMatch(
-      /persist_run_finding.*for update.*status = 'running'.*lease_owner.*lease_expires_at > now\(\).*run_findings/,
+      /persist_run_finding.*for update.*status = 'running'.*lease_owner.*lease_expires_at > clock_timestamp\(\).*run_findings/,
     );
     expect(migration).toMatch(
       /create or replace function public\.create_pending_notification_for_run\(.*p_run_id uuid.*p_lease_owner uuid/,
     );
     expect(migration).toMatch(
-      /create_pending_notification_for_run.*status = 'running'.*lease_owner.*lease_expires_at > now\(\).*notifications/,
+      /create_pending_notification_for_run.*status = 'running'.*lease_owner.*lease_expires_at > clock_timestamp\(\).*notifications/,
     );
     expect(migration).toMatch(
       /create or replace function public\.mark_source_baseline_for_run\(.*p_run_id uuid.*p_lease_owner uuid/,
     );
+
+    for (const functionName of [
+      "persist_run_finding",
+      "create_pending_notification_for_run",
+      "mark_source_baseline_for_run",
+    ]) {
+      const functionStart = migration.indexOf(
+        `create or replace function public.${functionName}`,
+      );
+      const functionBody = migration.slice(functionStart, migration.indexOf("$$;", functionStart));
+      expect(functionBody).toContain("clock_timestamp()");
+      expect(functionBody).not.toContain("lease_expires_at > now()");
+      expect(functionBody).toMatch(
+        /update public\.radar_runs .*where id = p_run_id .*status = 'running'.*lease_owner = p_lease_owner.*lease_expires_at > clock_timestamp\(\).*returning id into/,
+      );
+    }
 
     const detailRoute = readFileSync(
       resolve(process.cwd(), "src/app/api/radars/[id]/route.ts"),
@@ -120,6 +136,11 @@ describe("monitoring migration contract", () => {
     expect(runRadarSource).toContain('rpc("persist_run_finding"');
     expect(runRadarSource).toContain("lease_expires_at");
     expect(runRadarSource).toContain("deadlineAt");
+    expect(runRadarSource).toContain("AbortController");
+    expect(runRadarSource).toContain("maxRetries: 0");
+    expect(runRadarSource).toContain("signal:");
+    expect(runRadarSource).toContain("outerDeadlineAt");
+    expect(runRadarSource).toContain("RECOVERY_CLEANUP_BUDGET_MS");
     expect(runRadarSource).not.toMatch(/from\("findings"\)\.insert/);
 
     const notificationsSource = readFileSync(
@@ -136,6 +157,15 @@ describe("monitoring migration contract", () => {
     );
     expect(createRoute).toContain("toPublicRadar");
     expect(createRoute).not.toContain("return NextResponse.json({ radar, run }");
+
+    const manualRunRoute = readFileSync(
+      resolve(process.cwd(), "src/app/api/radars/[id]/run/route.ts"),
+      "utf8",
+    );
+    expect(createRoute).toContain("MONITORING_ROUTE_BUDGET_MS");
+    expect(createRoute).toContain("outerDeadlineAt");
+    expect(manualRunRoute).toContain("MONITORING_ROUTE_BUDGET_MS");
+    expect(manualRunRoute).toContain("outerDeadlineAt");
   });
 });
 
