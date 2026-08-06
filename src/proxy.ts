@@ -23,7 +23,9 @@ function authRedirect(request: NextRequest) {
     "next",
     request.nextUrl.pathname === "/connect-telegram"
       ? "connect-telegram"
-      : "dashboard",
+      : request.nextUrl.pathname === "/radars" || request.nextUrl.pathname.startsWith("/radars/")
+        ? "radars"
+        : "dashboard",
   );
 
   return url;

@@ -101,7 +101,7 @@ export default async function RadarsPage({ searchParams }: { searchParams: Searc
   } = await supabase.auth.getUser();
 
   if (!user) {
-    redirect(`/auth?mode=login&next=dashboard&lang=${redirectLocale}`);
+    redirect(`/auth?mode=login&next=radars&lang=${redirectLocale}`);
   }
 
   const [{ data: profile }, { data: radarData, error: radarError }] = await Promise.all([

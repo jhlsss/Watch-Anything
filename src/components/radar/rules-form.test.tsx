@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { RulesForm } from "@/components/radar/rules-form";
 import type { RadarRules } from "@/types/contracts";
 
@@ -14,7 +14,21 @@ const rules: RadarRules = {
   intervalMinutes: 360,
 };
 
+afterEach(cleanup);
+
 describe("RulesForm", () => {
+  it("only exposes the three editable rule fields", () => {
+    render(<RulesForm initialRules={rules} locale="en" />);
+
+    expect(screen.queryByRole("textbox", { name: "Original request" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Search query" })).toBeNull();
+    expect(screen.queryByRole("spinbutton", { name: "Importance threshold" })).toBeNull();
+    expect(screen.getByText("Generated search terms")).not.toBeNull();
+    expect(screen.getByText("Request")).not.toBeNull();
+    expect(screen.getByText("Review rules")).not.toBeNull();
+    expect(screen.getByText("Activate")).not.toBeNull();
+  });
+
   it("adds a new include topic and submits the updated rules", () => {
     const onSubmit = vi.fn();
 

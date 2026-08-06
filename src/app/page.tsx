@@ -3,7 +3,7 @@
 import { Hero } from "@/components/landing/hero";
 import { SiteHeader } from "@/components/layout/site-header";
 import { getMessages, normalizeLocale } from "@/lib/i18n";
-import { Activity, ArrowUpRight } from "lucide-react";
+import { Activity, ArrowRight, ArrowUpRight } from "lucide-react";
 import Link from "next/link";
 import { use } from "react";
 
@@ -82,6 +82,28 @@ export default function Home({
               </span>
             </div>
             <p className="mt-2 text-sm text-slate-500">{copy.landing.proofSummary}</p>
+            <div className="mt-5 space-y-3">
+              {copy.landing.proofFindings.map((finding) => (
+                <article key={finding.radarName} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-slate-950">{finding.radarName}</p>
+                      <p className="mt-2 text-sm leading-6 text-slate-700">{finding.message}</p>
+                    </div>
+                    <span className="shrink-0 text-xs text-slate-400">{finding.time}</span>
+                  </div>
+                  <p className="mt-3 text-xs text-slate-500">
+                    {finding.detailLabel} {finding.detail}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {finding.secondaryLabel} {finding.secondary}
+                  </p>
+                  <button type="button" className="mt-3 text-xs font-semibold text-violet-700 hover:text-violet-900">
+                    {copy.landing.viewSource} →
+                  </button>
+                </article>
+              ))}
+            </div>
             <div className="mt-5 grid grid-cols-1 gap-3 min-[850px]:grid-cols-4">
               {[2, 8, 2, 1].map((value, index) => (
                 <div key={copy.landing.proofMetrics[index]} className="rounded-2xl bg-slate-50 p-4">
@@ -103,19 +125,28 @@ export default function Home({
           </div>
 
           <div className="mt-8 grid gap-4 min-[850px]:grid-cols-3">
-            {copy.landing.stages.map((stage) => (
-              <article key={stage.step} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                <p className="text-sm font-extrabold text-violet-600">{stage.step}</p>
-                <h3 className="mt-6 text-xl font-semibold text-slate-950">{stage.title}</h3>
-                <p className="mt-3 text-sm leading-6 text-slate-600">{stage.description}</p>
-                <div className="mt-5 flex flex-wrap gap-2">
-                  {stage.tags.map((tag) => (
-                    <span key={tag} className="rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700">
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-              </article>
+            {copy.landing.stages.map((stage, index) => (
+              <div key={stage.step} className="relative">
+                <article className="h-full rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <p className="text-sm font-extrabold text-violet-600">{stage.step}</p>
+                  <h3 className="mt-6 text-xl font-semibold text-slate-950">{stage.title}</h3>
+                  <p className="mt-3 text-sm leading-6 text-slate-600">{stage.description}</p>
+                  <div className="mt-5 flex flex-wrap gap-2">
+                    {stage.tags.map((tag) => (
+                      <span key={tag} className="rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700">
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                </article>
+                {index < copy.landing.stages.length - 1 ? (
+                  <ArrowRight
+                    aria-label={copy.landing.nextStep}
+                    className="absolute -right-3 top-1/2 hidden h-6 w-6 -translate-y-1/2 text-violet-400 min-[850px]:block"
+                    aria-hidden="false"
+                  />
+                ) : null}
+              </div>
             ))}
           </div>
         </div>
@@ -130,10 +161,10 @@ export default function Home({
           </div>
 
           <div className="mt-8 grid gap-4 min-[850px]:grid-cols-2">
-            {copy.landing.templates.map(([title, description]) => (
+            {copy.landing.templates.map(([title, description, request]) => (
               <Link
                 key={title}
-                href={`/rules?lang=${locale}`}
+                href={`/rules?lang=${locale}&request=${encodeURIComponent(request)}`}
                 className="flex min-w-0 items-center justify-between rounded-3xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-violet-200"
               >
                 <div>
@@ -167,6 +198,13 @@ export default function Home({
           </div>
         </div>
       </section>
+
+      <footer className="border-t border-slate-200 bg-white py-8">
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-2 px-4 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <span className="font-semibold text-slate-700">Watch Anything</span>
+          <span>{copy.landing.footerCopyright}</span>
+        </div>
+      </footer>
     </main>
   );
 }

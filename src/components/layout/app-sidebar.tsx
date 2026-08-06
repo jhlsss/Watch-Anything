@@ -9,8 +9,8 @@ interface AppSidebarProps {
 }
 
 const items = [
-  { href: "/auth", key: "dashboard", icon: LayoutDashboard },
-  { href: "/rules", key: "radars", icon: Radar },
+  { href: "/dashboard", key: "dashboard", icon: LayoutDashboard },
+  { href: "/radars", key: "radars", icon: Radar },
   { href: "/connect-telegram", key: "telegram", icon: Send },
 ] as const;
 

@@ -11,6 +11,7 @@ import { authenticateAction } from "@/app/auth/actions";
 import { POST as parseRulesPost } from "@/app/api/rules/parse/route";
 import { getOrCreatePendingSetup } from "@/app/api/pending-setups/route";
 import { hasImmutableRuleChanges } from "@/app/rules/page";
+import { resolveSafeNext } from "@/lib/auth/service";
 import type { RadarRules } from "@/types/contracts";
 
 const {
@@ -18,13 +19,13 @@ const {
   createServerClientMock,
   parseRulesMock,
   signInMock,
-  signUpMock,
+  createUserMock,
 } = vi.hoisted(() => ({
   createAdminClientMock: vi.fn(),
   createServerClientMock: vi.fn(),
   parseRulesMock: vi.fn(),
   signInMock: vi.fn(),
-  signUpMock: vi.fn(),
+  createUserMock: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -56,13 +57,24 @@ beforeAll(() => {
 });
 
 describe("authenticateAction", () => {
+  it("preserves the Radars return target", () => {
+    expect(resolveSafeNext("radars")).toBe("/radars");
+  });
+
   beforeEach(() => {
     signInMock.mockReset();
-    signUpMock.mockReset();
+    createUserMock.mockReset();
+    createAdminClientMock.mockReset();
+    createAdminClientMock.mockReturnValue({
+      auth: {
+        admin: {
+          createUser: createUserMock,
+        },
+      },
+    });
     createServerClientMock.mockReturnValue({
       auth: {
         signInWithPassword: signInMock,
-        signUp: signUpMock,
       },
     });
   });
@@ -101,19 +113,72 @@ describe("authenticateAction", () => {
   });
 
   it("supports signup and turns provider failures into stable form errors", async () => {
-    signUpMock.mockResolvedValue({
+    createUserMock.mockResolvedValue({
       data: { user: null, session: null },
       error: { message: "User already registered" },
+    });
+    signInMock.mockResolvedValue({
+      data: { user: null, session: null },
+      error: { message: "Invalid login credentials" },
     });
 
     await expect(
       authenticateAction({
         mode: "signup",
+        fullName: "QA Tester",
         email: "user@example.com",
         password: "password123",
         next: "dashboard",
       }),
     ).resolves.toEqual({ ok: false, error: "AUTHENTICATION_FAILED" });
+  });
+
+  it("recovers a repeated signup by signing into the existing account", async () => {
+    createUserMock.mockResolvedValue({
+      data: { user: null, session: null },
+      error: { message: "User already registered" },
+    });
+    signInMock.mockResolvedValue({
+      data: { user: { id: "user-1" }, session: { access_token: "server-only" } },
+      error: null,
+    });
+
+    await expect(
+      authenticateAction({
+        mode: "signup",
+        fullName: "QA Tester",
+        email: "user@example.com",
+        password: "password123",
+        next: "connect-telegram",
+      }),
+    ).resolves.toEqual({ ok: true, next: "/connect-telegram" });
+    expect(createUserMock).toHaveBeenCalledWith({
+      email: "user@example.com",
+      password: "password123",
+      email_confirm: true,
+      user_metadata: { full_name: "QA Tester" },
+    });
+  });
+
+  it("recovers when signup creates the user but does not return a session", async () => {
+    createUserMock.mockResolvedValue({
+      data: { user: { id: "user-1" }, session: null },
+      error: null,
+    });
+    signInMock.mockResolvedValue({
+      data: { user: { id: "user-1" }, session: { access_token: "server-only" } },
+      error: null,
+    });
+
+    await expect(
+      authenticateAction({
+        mode: "signup",
+        fullName: "QA Tester",
+        email: "user@example.com",
+        password: "password123",
+        next: "connect-telegram",
+      }),
+    ).resolves.toEqual({ ok: true, next: "/connect-telegram" });
   });
 
   it("does not clear persisted rules when authentication fails", async () => {
@@ -228,6 +293,31 @@ describe("parse route quota claim", () => {
       p_identity_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
     expect(parseRulesMock).not.toHaveBeenCalled();
+  });
+
+  it("releases the guest quota claim when rule parsing fails", async () => {
+    const rpc = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: { allowed: true, identity_count: 1, global_count: 1 },
+        error: null,
+      })
+      .mockResolvedValueOnce({ data: true, error: null });
+    createAdminClientMock.mockReturnValue({ rpc });
+    parseRulesMock.mockRejectedValueOnce(new Error("AI provider unavailable"));
+
+    const request = new NextRequest("http://localhost/api/rules/parse", {
+      method: "POST",
+      body: JSON.stringify({ prompt: "Track company announcements", locale: "en" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const response = await parseRulesPost(request);
+
+    expect(response.status).toBe(502);
+    expect(rpc).toHaveBeenNthCalledWith(2, "release_guest_ai_request", {
+      p_identity_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
   });
 });
 

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { use, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AuthForm } from "@/components/auth/auth-form";
@@ -7,92 +8,21 @@ import { SiteHeader } from "@/components/layout/site-header";
 import { authenticateAction } from "@/app/auth/actions";
 import type { Locale } from "@/lib/i18n";
 import { getMessages, normalizeLocale } from "@/lib/i18n";
-import { editableRuleDeltaSchema } from "@/lib/validation/radar-rules";
-import type { EditableRuleDelta } from "@/types/contracts";
-import { z } from "zod";
-
-export const RULE_FLOW_STORAGE_KEY = "watch-anything.rule-flow";
-
-const ruleFlowStorageSchema = z
-  .object({
-    originalPrompt: z.string().trim().min(1).max(4_000),
-    ruleToken: z.string().min(1).max(8_192).optional(),
-    editableDelta: editableRuleDeltaSchema.optional(),
-  })
-  .strict();
-
-export type RuleFlowStorage = {
-  originalPrompt: string;
-  ruleToken?: string;
-  editableDelta?: EditableRuleDelta;
+import type { AuthMode } from "@/components/auth/auth-form";
+import {
+  clearRuleFlowStorage,
+  readRuleFlowStorage,
+  RULE_FLOW_STORAGE_KEY,
+  writeRuleFlowStorage,
+} from "@/lib/auth/rule-flow-storage";
+import type { RuleFlowStorage } from "@/lib/auth/rule-flow-storage";
+export {
+  clearRuleFlowStorage,
+  readRuleFlowStorage,
+  RULE_FLOW_STORAGE_KEY,
+  writeRuleFlowStorage,
 };
-
-function getLocalStorage(storage?: Storage): Storage | null {
-  if (storage) {
-    return storage;
-  }
-
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  return window.localStorage;
-}
-
-export function readRuleFlowStorage(storage?: Storage): RuleFlowStorage | null {
-  const localStorage = getLocalStorage(storage);
-
-  if (!localStorage) {
-    return null;
-  }
-
-  try {
-    const raw = localStorage.getItem(RULE_FLOW_STORAGE_KEY);
-
-    if (!raw) {
-      return null;
-    }
-
-    const result = ruleFlowStorageSchema.safeParse(JSON.parse(raw));
-
-    if (!result.success) {
-      return null;
-    }
-
-    return result.data as RuleFlowStorage;
-  } catch {
-    return null;
-  }
-}
-
-export function writeRuleFlowStorage(
-  flow: RuleFlowStorage,
-  storage?: Storage,
-): void {
-  const localStorage = getLocalStorage(storage);
-
-  if (!localStorage) {
-    return;
-  }
-
-  const safeFlow = {
-    originalPrompt: flow.originalPrompt,
-    ...(flow.ruleToken ? { ruleToken: flow.ruleToken } : {}),
-    ...(flow.editableDelta
-      ? { editableDelta: editableRuleDeltaSchema.parse(flow.editableDelta) }
-      : {}),
-  };
-
-  const result = ruleFlowStorageSchema.safeParse(safeFlow);
-
-  if (result.success) {
-    localStorage.setItem(RULE_FLOW_STORAGE_KEY, JSON.stringify(result.data));
-  }
-}
-
-export function clearRuleFlowStorage(storage?: Storage): void {
-  getLocalStorage(storage)?.removeItem(RULE_FLOW_STORAGE_KEY);
-}
+export type { RuleFlowStorage } from "@/lib/auth/rule-flow-storage";
 
 export function formatRuleFlowError(error: unknown, locale: Locale): string {
   if (error === "EXPIRED_RULE_TOKEN") {
@@ -171,8 +101,10 @@ export default function AuthPage({
   const locale = normalizeLocale(lang);
   const copy = getMessages(locale);
   const initialMode = mode === "signup" ? "signup" : "login";
+  const isReset = params.reset === "1";
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
+  const [authMode, setAuthMode] = useState<AuthMode>(initialMode);
 
   const handleAuthenticate = async (payload: {
     mode: "login" | "signup";
@@ -231,25 +163,48 @@ export default function AuthPage({
       />
 
       <div className="mx-auto grid w-full max-w-6xl min-w-0 gap-10 px-4 py-10 sm:px-6 min-[850px]:grid-cols-[1fr_360px] min-[850px]:items-center min-[850px]:py-16">
-        <section className="space-y-5">
-          <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-violet-600">{copy.auth.eyebrow}</p>
-          <div className="space-y-3">
-            <h1 className="text-4xl font-semibold tracking-tight text-slate-950">{copy.auth.title}</h1>
-            <p className="max-w-xl text-sm leading-7 text-slate-600">{copy.auth.description}</p>
-          </div>
-          <div className="max-w-md rounded-3xl border border-violet-100 bg-violet-50 p-4 text-sm leading-6 text-violet-800">
-            {copy.auth.returnNote}
-          </div>
-        </section>
+        {isReset ? (
+          <section className="max-w-2xl space-y-5 min-[850px]:col-span-2">
+            <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-violet-600">{copy.auth.eyebrow}</p>
+            <div className="space-y-3">
+              <h1 className="text-4xl font-semibold tracking-tight text-slate-950">{copy.auth.resetTitle}</h1>
+              <p className="max-w-xl text-sm leading-7 text-slate-600">{copy.auth.resetDescription}</p>
+            </div>
+            <div className="max-w-md rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-800" role="status">
+              {copy.auth.resetMessage}
+            </div>
+            <Link href={`/auth?lang=${locale}&mode=login`} className="inline-flex rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500">
+              {copy.auth.backToLogin}
+            </Link>
+          </section>
+        ) : (
+          <>
+            <section className="space-y-5">
+              <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-violet-600">{copy.auth.eyebrow}</p>
+              <div className="space-y-3">
+                <h1 className="text-4xl font-semibold tracking-tight text-slate-950">
+                  {authMode === "signup" ? copy.auth.signupTitle : copy.auth.loginTitle}
+                </h1>
+                <p className="max-w-xl text-sm leading-7 text-slate-600">
+                  {authMode === "signup" ? copy.auth.signupDescription : copy.auth.loginDescription}
+                </p>
+              </div>
+              <div className="max-w-md rounded-3xl border border-violet-100 bg-violet-50 p-4 text-sm leading-6 text-violet-800">
+                {authMode === "signup" ? copy.auth.signupReturnNote : copy.auth.loginReturnNote}
+              </div>
+            </section>
 
-        <div>
-          <AuthForm
-            locale={locale}
-            initialMode={initialMode}
-            error={error ?? undefined}
-            onAuthenticate={handleAuthenticate}
-          />
-        </div>
+            <div>
+              <AuthForm
+                locale={locale}
+                initialMode={initialMode}
+                error={error ?? undefined}
+                onModeChange={setAuthMode}
+                onAuthenticate={handleAuthenticate}
+              />
+            </div>
+          </>
+        )}
       </div>
     </main>
   );

@@ -30,8 +30,20 @@ export function Hero({
   onParseRequest,
 }: HeroProps) {
   const [request, setRequest] = useState("");
+  const [requestError, setRequestError] = useState(false);
   const copy = getMessages(locale).landing;
   const rulesHref = `/rules?lang=${locale}${request.trim() ? `&request=${encodeURIComponent(request.trim())}` : ""}`;
+
+  const handlePrimaryClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!request.trim()) {
+      event.preventDefault();
+      setRequestError(true);
+      return;
+    }
+
+    setRequestError(false);
+    onParseRequest?.(request.trim());
+  };
 
   return (
     <section className="grid min-w-0 gap-10 py-10 min-[850px]:grid-cols-[1.05fr_0.95fr] min-[850px]:items-center min-[850px]:py-16">
@@ -48,19 +60,32 @@ export function Hero({
           <div className="flex flex-col gap-3 min-[850px]:flex-row">
             <input
               value={request}
-              onChange={(event) => setRequest(event.target.value)}
+              onChange={(event) => {
+                setRequest(event.target.value);
+                if (event.target.value.trim()) {
+                  setRequestError(false);
+                }
+              }}
               placeholder={inputPlaceholder}
+              required
+              aria-invalid={requestError}
+              aria-describedby={requestError ? "hero-request-error" : undefined}
               className="min-h-12 flex-1 rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-violet-300"
             />
             <Link
               href={rulesHref}
-              onClick={() => onParseRequest?.(request.trim())}
+              onClick={handlePrimaryClick}
               className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-violet-600 px-5 text-sm font-medium text-white transition hover:bg-violet-500"
             >
               {primaryCta}
               <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </Link>
           </div>
+          {requestError ? (
+            <p id="hero-request-error" role="alert" className="mt-3 text-sm font-medium text-rose-600">
+              {copy.requestRequired}
+            </p>
+          ) : null}
         </div>
 
         <div className="space-y-3">

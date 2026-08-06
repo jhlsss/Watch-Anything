@@ -88,9 +88,13 @@ describe("auth service", () => {
     expect(result.next).toBe("/connect-telegram");
   });
 
-  it("signs up with validated email and password and defaults unknown next to dashboard", async () => {
-    const signUpMock = vi.fn().mockResolvedValue({
-      data: { session: null, user: null },
+  it("creates a confirmed user, signs in, and defaults unknown next to dashboard", async () => {
+    const createUserMock = vi.fn().mockResolvedValue({
+      data: { user: { id: "user-1" } },
+      error: null,
+    });
+    const signInWithPasswordMock = vi.fn().mockResolvedValue({
+      data: { session: { access_token: "server-only" }, user: { id: "user-1" } },
       error: null,
     });
 
@@ -99,19 +103,32 @@ describe("auth service", () => {
         email: "chawei@example.com",
         password: "12345678",
         next: "https://evil.example",
+        fullName: "QA Tester",
       },
       {
         auth: {
-          signInWithPassword: vi.fn(),
-          signUp: signUpMock,
+          signInWithPassword: signInWithPasswordMock,
+          signUp: vi.fn(),
+        },
+      },
+      {
+        auth: {
+          admin: {
+            createUser: createUserMock,
+          },
         },
       },
     );
 
-    expect(signUpMock).toHaveBeenCalledWith({
+    expect(createUserMock).toHaveBeenCalledWith({
       email: "chawei@example.com",
       password: "12345678",
-      options: { emailRedirectTo: undefined },
+      email_confirm: true,
+      user_metadata: { full_name: "QA Tester" },
+    });
+    expect(signInWithPasswordMock).toHaveBeenCalledWith({
+      email: "chawei@example.com",
+      password: "12345678",
     });
     expect(result.next).toBe("/dashboard");
   });

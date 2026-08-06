@@ -598,9 +598,9 @@ describe("RadarCard", () => {
     setUnauthenticatedClient();
 
     await expect(RadarsPage({ searchParams: Promise.resolve({ lang: "zh-CN" }) })).rejects.toThrow(
-      "REDIRECT:/auth?mode=login&next=dashboard&lang=zh-CN",
+      "REDIRECT:/auth?mode=login&next=radars&lang=zh-CN",
     );
-    expect(redirectMock).toHaveBeenCalledWith("/auth?mode=login&next=dashboard&lang=zh-CN");
+    expect(redirectMock).toHaveBeenCalledWith("/auth?mode=login&next=radars&lang=zh-CN");
   });
 
   it("keeps zh-CN on the unauthenticated Radar detail redirect", async () => {
@@ -624,7 +624,7 @@ describe("RadarCard", () => {
     redirectMock.mockClear();
     setUnauthenticatedClient();
     await expect(RadarsPage({ searchParams: Promise.resolve({ lang: "fr" }) })).rejects.toThrow(
-      "REDIRECT:/auth?mode=login&next=dashboard&lang=en",
+      "REDIRECT:/auth?mode=login&next=radars&lang=en",
     );
 
     redirectMock.mockClear();

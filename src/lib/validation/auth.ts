@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const authNextSchema = z.enum(["dashboard", "connect-telegram"]);
+const authNextSchema = z.enum(["dashboard", "radars", "connect-telegram"]);
 
 export const authSchema = z.object({
   email: z.email(),

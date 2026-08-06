@@ -18,7 +18,7 @@ type AuthenticateActionPayload = {
 export type AuthenticateActionInput = AuthenticateActionPayload | FormData;
 
 export type AuthenticateActionResult =
-  | { ok: true; next: "/dashboard" | "/connect-telegram" }
+  | { ok: true; next: "/dashboard" | "/radars" | "/connect-telegram" }
   | {
       ok: false;
       error: "INVALID_INPUT" | "AUTHENTICATION_FAILED";
@@ -58,6 +58,18 @@ function normalizeInput(
   return input as AuthenticateActionPayload;
 }
 
+function hasAuthenticatedSession(result: Awaited<ReturnType<typeof signInWithPassword>>): boolean {
+  return Boolean(!result.error && result.data.user && result.data.session);
+}
+
+function canRecoverSignup(result: Awaited<ReturnType<typeof signUpWithPassword>>): boolean {
+  if (!result.error) {
+    return Boolean(result.data.user && !result.data.session);
+  }
+
+  return /already\s+(?:registered|exists)/iu.test(result.error.message);
+}
+
 export async function authenticateAction(
   input: AuthenticateActionInput,
 ): Promise<AuthenticateActionResult> {
@@ -70,11 +82,20 @@ export async function authenticateAction(
     return { ok: false, error: "INVALID_INPUT" };
   }
 
+  if (normalizedInput.mode === "signup" && !normalizedInput.fullName?.trim()) {
+    return { ok: false, error: "INVALID_INPUT" };
+  }
+
   const safeNext = resolveSafeNext(normalizedInput.next);
   const parsed = authSchema.safeParse({
     email: normalizedInput.email,
     password: normalizedInput.password,
-    next: safeNext === "/connect-telegram" ? "connect-telegram" : "dashboard",
+    next:
+      safeNext === "/connect-telegram"
+        ? "connect-telegram"
+        : safeNext === "/radars"
+          ? "radars"
+          : "dashboard",
   });
 
   if (!parsed.success) {
@@ -82,12 +103,22 @@ export async function authenticateAction(
   }
 
   try {
-    const result =
+    const authInput = {
+      ...parsed.data,
+      ...(normalizedInput.mode === "signup"
+        ? { fullName: normalizedInput.fullName }
+        : {}),
+    };
+    let result =
       normalizedInput.mode === "signup"
-        ? await signUpWithPassword(parsed.data)
-        : await signInWithPassword(parsed.data);
+        ? await signUpWithPassword(authInput)
+        : await signInWithPassword(authInput);
 
-    if (result.error || !result.data.user || !result.data.session) {
+    if (normalizedInput.mode === "signup" && canRecoverSignup(result)) {
+      result = await signInWithPassword(authInput);
+    }
+
+    if (!hasAuthenticatedSession(result)) {
       return { ok: false, error: "AUTHENTICATION_FAILED" };
     }
 

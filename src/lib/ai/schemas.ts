@@ -33,6 +33,27 @@ export class AiAdapterError extends Error {
   }
 }
 
+const importanceThresholdSchema = z.preprocess(
+  (value) => {
+    const numericValue =
+      typeof value === "string" && value.trim() !== ""
+        ? Number(value)
+        : value;
+
+    if (
+      typeof numericValue === "number" &&
+      Number.isFinite(numericValue) &&
+      numericValue > 0 &&
+      numericValue < 1
+    ) {
+      return Math.round(numericValue * 100);
+    }
+
+    return numericValue;
+  },
+  z.number().int().min(0).max(100),
+);
+
 export const parseRulesStructuredSchema = z.object({
   radar_name: z.string().min(1),
   subject: z.string().min(1),
@@ -40,7 +61,7 @@ export const parseRulesStructuredSchema = z.object({
   include_topics: z.array(z.string()),
   exclude_topics: z.array(z.string()),
   search_query: z.string().min(1),
-  importance_threshold: z.number().min(0).max(100),
+  importance_threshold: importanceThresholdSchema,
 });
 
 export const evaluateCandidateItemSchema = z.object({
@@ -86,7 +107,7 @@ export const parseRulesJsonSchema = {
       items: { type: "string" },
     },
     search_query: { type: "string" },
-    importance_threshold: { type: "number" },
+    importance_threshold: { type: ["number", "string"] },
   },
 } as const;
 

@@ -422,6 +422,31 @@ describe("parseRules", () => {
     expect(parsed.intervalMinutes).toBe(360);
   });
 
+  it.each([0.7, "0.7"])(
+    "normalizes fractional and string importance thresholds from the model (%s)",
+    async (importanceThreshold) => {
+      stubServerEnv();
+      const groq = createGroqStub([
+        JSON.stringify({
+          radar_name: "Company Updates Radar",
+          subject: "Product launches and pricing",
+          aliases: ["Company updates"],
+          include_topics: ["product launch", "pricing"],
+          exclude_topics: [],
+          search_query: "official company product launch pricing",
+          importance_threshold: importanceThreshold,
+        }),
+      ]);
+
+      await expect(
+        parseRules({
+          prompt: "Track official company product launches and pricing.",
+          groq,
+        }),
+      ).resolves.toMatchObject({ importanceThreshold: 70 });
+    },
+  );
+
   it("always uses GROQ_MODEL instead of a caller-supplied model", async () => {
     stubServerEnv("configured-groq-model");
     const groq = createGroqStub([
