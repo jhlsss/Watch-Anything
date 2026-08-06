@@ -7,7 +7,7 @@ import {
   sendPendingNotification,
 } from "@/lib/monitoring/notifications";
 import type { MonitoringClient } from "@/lib/monitoring/create-radar";
-import { createClient as createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "@/lib/supabase/admin-client";
 
 const radarIdSchema = z.uuid();
 

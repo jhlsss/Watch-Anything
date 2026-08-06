@@ -1,4 +1,4 @@
-import { createClient as createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "@/lib/supabase/admin-client";
 import type { RunResult } from "@/types/contracts";
 
 export type MonitoringErrorCode =
