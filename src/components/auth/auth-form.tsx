@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import type { Locale } from "@/lib/i18n";
 import { getMessages } from "@/lib/i18n";
@@ -27,7 +28,7 @@ export function AuthForm({ locale, initialMode = "login", onAuthenticate }: Auth
 
   return (
     <form onSubmit={handleSubmit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="grid grid-cols-2 gap-2 rounded-2xl bg-slate-100 p-1">
+      <div className="grid grid-cols-1 gap-2 rounded-2xl bg-slate-100 p-1 min-[850px]:grid-cols-2">
         <button
           type="button"
           onClick={() => setMode("login")}
@@ -82,9 +83,12 @@ export function AuthForm({ locale, initialMode = "login", onAuthenticate }: Auth
       </Button>
 
       {mode === "login" ? (
-        <button type="button" className="mx-auto mt-4 block text-sm font-medium text-violet-700">
+        <Link
+          href={`/auth?lang=${locale}&mode=login&reset=1`}
+          className="mx-auto mt-4 block w-fit text-sm font-medium text-violet-700"
+        >
           {copy.forgot}
-        </button>
+        </Link>
       ) : null}
     </form>
   );

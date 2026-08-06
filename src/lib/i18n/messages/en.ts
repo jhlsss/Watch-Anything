@@ -30,6 +30,9 @@ const en = {
     proofTitle: "See exactly what your Radar is doing.",
     proofDescription:
       "Every run leaves a clear trail: sources checked, candidates found, AI decisions made, and notifications sent.",
+    proofRadarName: "LISA Official Radar",
+    proofStatus: "Running",
+    proofSummary: "Music releases · Tours · Official partnerships · Reputable sources",
     proofMetrics: ["Sources checked", "Candidates", "Relevant", "Notified"],
     flowEyebrow: "How it works",
     flowTitle: "From an imperfect idea to a reliable signal.",
@@ -67,6 +70,10 @@ const en = {
     ],
     finalTitle: "Build a Radar before you create an account.",
     finalDescription: "See the rules first. Sign up only when you are ready to activate monitoring.",
+    previewDeviceStatus: "Signal, Wi-Fi and battery status",
+    previewRadarName: "LISA Official Radar",
+    previewAlert: "A new official single announcement was detected from a trusted source.",
+    previewEmpty: "No other important Radar updates today.",
   },
   rules: {
     eyebrow: "Review before activation",
@@ -88,14 +95,22 @@ const en = {
     previewTitle: "Preview",
     previewDescription: "These are the values your callback receives from the UI shell.",
     note: "UI only: this form keeps real local state and sends the final rules through a callback prop.",
-    success: "Rules captured locally. Your next page can decide whether to continue to auth or connect Telegram.",
+    removeTopic: "Remove topic",
+    defaults: {
+      radarName: "LISA Official Radar",
+      subject: "Track important official LISA music releases, tours and partnerships from trusted public sources.",
+      aliases: ["Lalisa Manobal"],
+      includeTopics: ["Official interviews", "Tour schedules"],
+      excludeTopics: ["Fan edits"],
+      searchQuery: "LISA official interview OR official release OR tour",
+    },
   },
   auth: {
     eyebrow: "Watch Anything account",
     title: "Log in to your workspace",
     description:
       "Your confirmed rules can be restored after you log in. New here? Create an account in the same form.",
-    returnNote: "After login, we will take you to the next step automatically.",
+    returnNote: "Submit the form to continue to the Telegram setup screen in this UI shell.",
     login: "Log in",
     signup: "Create account",
     fullName: "Full name",
@@ -103,7 +118,6 @@ const en = {
     password: "Password",
     forgot: "Forgot password?",
     continue: "Continue",
-    success: "Authentication callback completed locally. No external service was called.",
   },
   telegram: {
     eyebrow: "Required to activate",
@@ -120,7 +134,6 @@ const en = {
     connect: "I have started the bot",
     skip: "Back to rules",
     waiting: "Waiting for your app flow to verify the Telegram connection callback.",
-    connected: "Telegram connection callback completed locally. You can now activate your Radar in a later task.",
   },
 } as const;
 

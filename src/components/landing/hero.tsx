@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
+import { ArrowRight, BatteryFull, Signal, Wifi } from "lucide-react";
 import type { Locale } from "@/lib/i18n";
+import { getMessages } from "@/lib/i18n";
 
 interface HeroProps {
   locale: Locale;
@@ -13,10 +15,11 @@ interface HeroProps {
   primaryCta: string;
   helper: string;
   examples: readonly string[];
-  onParseRequest: (request: string) => void;
+  onParseRequest?: (request: string) => void;
 }
 
 export function Hero({
+  locale,
   title,
   kicker,
   description,
@@ -27,13 +30,11 @@ export function Hero({
   onParseRequest,
 }: HeroProps) {
   const [request, setRequest] = useState("");
-
-  const handleSubmit = () => {
-    onParseRequest(request.trim());
-  };
+  const copy = getMessages(locale).landing;
+  const rulesHref = `/rules?lang=${locale}${request.trim() ? `&request=${encodeURIComponent(request.trim())}` : ""}`;
 
   return (
-    <section className="grid gap-10 py-10 min-[850px]:grid-cols-[1.05fr_0.95fr] min-[850px]:items-center min-[850px]:py-16">
+    <section className="grid min-w-0 gap-10 py-10 min-[850px]:grid-cols-[1.05fr_0.95fr] min-[850px]:items-center min-[850px]:py-16">
       <div className="space-y-6">
         <div className="text-sm font-extrabold uppercase tracking-[0.18em] text-violet-600">{kicker}</div>
         <div className="space-y-4">
@@ -51,9 +52,14 @@ export function Hero({
               placeholder={inputPlaceholder}
               className="min-h-12 flex-1 rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-violet-300"
             />
-            <Button className="h-12 rounded-2xl bg-violet-600 px-5 text-white hover:bg-violet-500" onClick={handleSubmit}>
+            <Link
+              href={rulesHref}
+              onClick={() => onParseRequest?.(request.trim())}
+              className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-violet-600 px-5 text-sm font-medium text-white transition hover:bg-violet-500"
+            >
               {primaryCta}
-            </Button>
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
           </div>
         </div>
 
@@ -78,17 +84,24 @@ export function Hero({
         <div className="absolute top-10 h-72 w-72 rounded-full bg-violet-100 blur-3xl" />
         <div className="relative w-full rounded-[2rem] bg-slate-950 p-3 shadow-2xl shadow-violet-200">
           <div className="overflow-hidden rounded-[1.6rem] bg-slate-50">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3 text-xs font-semibold text-slate-500">
+            <div
+              className="flex items-center justify-between border-b border-slate-200 px-5 py-3 text-xs font-semibold text-slate-500"
+              aria-label={copy.previewDeviceStatus}
+            >
               <span>9:41</span>
-              <span>▮▮ ᯤ ▰</span>
+              <span className="flex items-center gap-1" aria-hidden="true">
+                <Signal className="h-3 w-3" />
+                <Wifi className="h-3 w-3" />
+                <BatteryFull className="h-3 w-3" />
+              </span>
             </div>
             <div className="space-y-4 p-4">
               <div className="rounded-2xl bg-white p-4 shadow-sm">
-                <p className="text-xs font-semibold text-slate-900">LISA Official Radar</p>
-                <p className="mt-2 text-sm text-slate-600">A new official single announcement was detected from a trusted source.</p>
+                <p className="text-xs font-semibold text-slate-900">{copy.previewRadarName}</p>
+                <p className="mt-2 text-sm text-slate-600">{copy.previewAlert}</p>
               </div>
               <div className="rounded-2xl bg-violet-50 p-4 text-sm text-violet-800">
-                No other important Radar updates today.
+                {copy.previewEmpty}
               </div>
             </div>
           </div>

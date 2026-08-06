@@ -30,6 +30,9 @@ const zhCN = {
     proofTitle: "清楚看到你的 Radar 在做什么。",
     proofDescription:
       "每次运行都会留下清晰记录：检查过的来源、发现的候选信息、AI 判断结果，以及发送的通知。",
+    proofRadarName: "LISA Official Radar",
+    proofStatus: "运行中",
+    proofSummary: "音乐发布 · 巡演 · 官方合作 · 可信来源",
     proofMetrics: ["已检查来源", "候选信息", "相关结果", "已通知"],
     flowEyebrow: "工作方式",
     flowTitle: "从模糊想法到可靠信号。",
@@ -66,6 +69,10 @@ const zhCN = {
     ],
     finalTitle: "注册前，先搭建一个 Radar。",
     finalDescription: "先看规则，再决定什么时候创建账号并启用监控。",
+    previewDeviceStatus: "信号、Wi-Fi 和电池状态",
+    previewRadarName: "LISA Official Radar",
+    previewAlert: "检测到可信来源发布的官方新单曲公告。",
+    previewEmpty: "今天没有其他重要的 Radar 动态。",
   },
   rules: {
     eyebrow: "启用前确认",
@@ -86,13 +93,21 @@ const zhCN = {
     previewTitle: "预览",
     previewDescription: "这里展示的是 UI 壳层通过回调返回的值。",
     note: "仅 UI：这个表单维护真实本地状态，并通过 callback prop 提交最终规则。",
-    success: "规则已在本地捕获。后续页面可以决定继续登录还是连接 Telegram。",
+    removeTopic: "删除话题",
+    defaults: {
+      radarName: "LISA Official Radar",
+      subject: "关注 LISA 的官方音乐发布、巡演和重要合作，只使用可信公开来源。",
+      aliases: ["Lalisa Manobal"],
+      includeTopics: ["官方采访", "巡演安排"],
+      excludeTopics: ["二创剪辑"],
+      searchQuery: "LISA official interview OR official release OR tour",
+    },
   },
   auth: {
     eyebrow: "Watch Anything 账号",
     title: "登录你的工作区",
     description: "登录后可以恢复刚刚确认的规则。如果还没有账号，也可以在同一个表单里创建。",
-    returnNote: "登录成功后，会自动进入下一步。",
+    returnNote: "提交表单后会进入 Telegram 设置页面；这里不会调用认证服务。",
     login: "登录",
     signup: "创建账号",
     fullName: "姓名",
@@ -100,7 +115,6 @@ const zhCN = {
     password: "密码",
     forgot: "忘记密码？",
     continue: "继续",
-    success: "认证回调已在本地完成，没有调用任何外部服务。",
   },
   telegram: {
     eyebrow: "启用前必须完成",
@@ -116,7 +130,6 @@ const zhCN = {
     connect: "我已经启动机器人",
     skip: "返回规则页",
     waiting: "正在等待你的应用流程验证 Telegram callback。",
-    connected: "Telegram 连接回调已在本地完成。后续任务可以继续启用你的 Radar。",
   },
 } as const;
 

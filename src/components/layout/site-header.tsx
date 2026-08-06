@@ -20,8 +20,12 @@ interface SiteHeaderProps {
 }
 
 function withLocale(href: string, locale: Locale) {
-  const separator = href.includes("?") ? "&" : "?";
-  return `${href}${separator}lang=${locale}`;
+  const hashIndex = href.indexOf("#");
+  const pathAndQuery = hashIndex === -1 ? href : href.slice(0, hashIndex);
+  const hash = hashIndex === -1 ? "" : href.slice(hashIndex);
+  const separator = pathAndQuery.includes("?") ? "&" : "?";
+
+  return `${pathAndQuery}${separator}lang=${locale}${hash}`;
 }
 
 function BrandMark() {
@@ -48,13 +52,13 @@ export function SiteHeader({
 }: SiteHeaderProps) {
   return (
     <header className={cn("border-b border-slate-200 bg-white/95 backdrop-blur", className)}>
-      <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
-        <Link href={withLocale("/", locale)} className="flex items-center gap-3 font-semibold text-slate-950">
+      <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6">
+        <Link href={withLocale("/", locale)} className="flex min-w-0 shrink-0 items-center gap-3 font-semibold text-slate-950">
           <BrandMark />
           <span>{brand}</span>
         </Link>
 
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-3">
           {navLinks.length > 0 ? (
             <nav className="hidden items-center gap-5 text-sm text-slate-600 min-[850px]:flex">
               {navLinks.map((item) => (

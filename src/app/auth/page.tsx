@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { use } from "react";
+import { useRouter } from "next/navigation";
 import { AuthForm } from "@/components/auth/auth-form";
 import { SiteHeader } from "@/components/layout/site-header";
 import { getMessages, normalizeLocale } from "@/lib/i18n";
@@ -8,32 +9,28 @@ import { getMessages, normalizeLocale } from "@/lib/i18n";
 export default function AuthPage({
   searchParams,
 }: {
-  searchParams?: { lang?: string; mode?: string };
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const locale = normalizeLocale(searchParams?.lang);
+  const params = use(searchParams);
+  const lang = Array.isArray(params.lang) ? params.lang[0] : params.lang;
+  const mode = Array.isArray(params.mode) ? params.mode[0] : params.mode;
+  const locale = normalizeLocale(lang);
   const copy = getMessages(locale);
-  const initialMode = searchParams?.mode === "signup" ? "signup" : "login";
-  const [message, setMessage] = useState("");
-
-  const actions = useMemo(
-    () => ({
-      locale,
-      brand: copy.common.brand,
-      localeLabel: copy.common.localeLabel,
-      localeNames: copy.common.locales,
-    }),
-    [copy.common.brand, copy.common.localeLabel, copy.common.locales, locale],
-  );
+  const initialMode = mode === "signup" ? "signup" : "login";
+  const router = useRouter();
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <SiteHeader
-        {...actions}
+        locale={locale}
+        brand={copy.common.brand}
+        localeLabel={copy.common.localeLabel}
+        localeNames={copy.common.locales}
         basePath="/auth"
         primaryAction={{ href: "/rules", label: copy.nav.getStarted }}
       />
 
-      <div className="mx-auto grid w-full max-w-6xl gap-10 px-4 py-10 sm:px-6 min-[850px]:grid-cols-[1fr_360px] min-[850px]:items-center min-[850px]:py-16">
+      <div className="mx-auto grid w-full max-w-6xl min-w-0 gap-10 px-4 py-10 sm:px-6 min-[850px]:grid-cols-[1fr_360px] min-[850px]:items-center min-[850px]:py-16">
         <section className="space-y-5">
           <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-violet-600">{copy.auth.eyebrow}</p>
           <div className="space-y-3">
@@ -50,10 +47,9 @@ export default function AuthPage({
             locale={locale}
             initialMode={initialMode}
             onAuthenticate={() => {
-              setMessage(copy.auth.success);
+              router.push(`/connect-telegram?lang=${locale}`);
             }}
           />
-          {message ? <p className="mt-4 rounded-2xl bg-emerald-50 p-4 text-sm text-emerald-800">{message}</p> : null}
         </div>
       </div>
     </main>

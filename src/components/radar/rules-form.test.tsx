@@ -18,7 +18,7 @@ describe("RulesForm", () => {
   it("adds a new include topic and submits the updated rules", () => {
     const onSubmit = vi.fn();
 
-    render(<RulesForm initialRules={rules} onSubmit={onSubmit} />);
+    render(<RulesForm initialRules={rules} locale="zh-CN" onSubmit={onSubmit} />);
 
     fireEvent.click(screen.getByRole("button", { name: /添加关注项/i }));
     fireEvent.change(screen.getByLabelText(/新的关注项/i), {
@@ -31,5 +31,21 @@ describe("RulesForm", () => {
         includeTopics: expect.arrayContaining(["Official interviews"]),
       }),
     );
+  });
+
+  it("removes an exclude topic with a localized SVG delete control before confirming", () => {
+    const onConfirmRules = vi.fn();
+
+    render(<RulesForm initialRules={rules} locale="en" onConfirmRules={onConfirmRules} />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove topic" })[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm rules" }));
+
+    expect(onConfirmRules).toHaveBeenCalledWith(
+      expect.objectContaining({
+        excludeTopics: [],
+      }),
+    );
+    expect(screen.queryByText("×")).toBeNull();
   });
 });

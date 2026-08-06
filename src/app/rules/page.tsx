@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { use, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { RulesForm } from "@/components/radar/rules-form";
 import { normalizeLocale, getMessages } from "@/lib/i18n";
@@ -9,40 +10,41 @@ import type { RadarRules } from "@/types/contracts";
 export default function RulesPage({
   searchParams,
 }: {
-  searchParams?: { lang?: string };
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const locale = normalizeLocale(searchParams?.lang);
+  const params = use(searchParams);
+  const lang = Array.isArray(params.lang) ? params.lang[0] : params.lang;
+  const request = Array.isArray(params.request) ? params.request[0] : params.request;
+  const locale = normalizeLocale(lang);
   const copy = getMessages(locale);
-  const [latestSubmission, setLatestSubmission] = useState<RadarRules | null>(null);
+  const router = useRouter();
 
   const initialRules = useMemo<RadarRules>(
     () => ({
-      radarName: "LISA Official Radar",
-      subject:
-        locale === "zh-CN"
-          ? "关注 LISA 的官方音乐发布、巡演和重要合作，只使用可信公开来源。"
-          : "Track important official LISA music releases, tours and partnerships from trusted public sources.",
-      aliases: ["Lalisa Manobal"],
-      includeTopics: locale === "zh-CN" ? ["官方采访", "巡演安排"] : ["Official interviews", "Tour schedules"],
-      excludeTopics: locale === "zh-CN" ? ["二创剪辑"] : ["Fan edits"],
-      searchQuery: "LISA official interview OR official release OR tour",
+      radarName: copy.rules.defaults.radarName,
+      subject: request?.trim() || copy.rules.defaults.subject,
+      aliases: [...copy.rules.defaults.aliases],
+      includeTopics: [...copy.rules.defaults.includeTopics],
+      excludeTopics: [...copy.rules.defaults.excludeTopics],
+      searchQuery: copy.rules.defaults.searchQuery,
       importanceThreshold: 75,
       intervalMinutes: 360,
     }),
-    [locale],
+    [copy.rules.defaults, request],
   );
 
   return (
-    <main className="flex min-h-screen bg-slate-50 text-slate-950">
+    <main className="flex min-h-screen min-w-0 bg-slate-50 text-slate-950">
       <AppSidebar locale={locale} currentPath="/rules" />
-      <div className="flex-1 px-4 py-6 pb-24 sm:px-6 min-[850px]:pb-6">
+      <div className="min-w-0 flex-1 px-4 py-6 pb-24 sm:px-6 min-[850px]:pb-6">
         <div className="mx-auto w-full max-w-6xl">
-          <RulesForm initialRules={initialRules} locale={locale} onConfirmRules={setLatestSubmission} />
-          {latestSubmission ? (
-            <div className="mt-4 rounded-3xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-800">
-              {copy.rules.success}
-            </div>
-          ) : null}
+          <RulesForm
+            initialRules={initialRules}
+            locale={locale}
+            onConfirmRules={() => {
+              router.push(`/auth?lang=${locale}&mode=signup`);
+            }}
+          />
         </div>
       </div>
     </main>

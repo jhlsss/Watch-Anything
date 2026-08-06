@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import { Send } from "lucide-react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import type { Locale } from "@/lib/i18n";
 import { getMessages } from "@/lib/i18n";
@@ -13,7 +13,6 @@ interface ConnectCardProps {
 
 export function ConnectCard({ locale, onConnectTelegram }: ConnectCardProps) {
   const copy = getMessages(locale).telegram;
-  const [connected, setConnected] = useState(false);
 
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -23,11 +22,11 @@ export function ConnectCard({ locale, onConnectTelegram }: ConnectCardProps) {
         <p className="text-sm leading-6 text-slate-600">{copy.description}</p>
       </div>
 
-      <div className="mt-6 flex items-center gap-4 rounded-3xl border border-violet-100 bg-violet-50 p-4">
+      <div className="mt-6 flex min-w-0 flex-wrap items-center gap-4 rounded-3xl border border-violet-100 bg-violet-50 p-4">
         <div className="grid h-12 w-12 place-items-center rounded-full bg-violet-600 text-white">
           <Send className="h-5 w-5" />
         </div>
-        <div>
+        <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-slate-950">{copy.botLabel}</p>
           <p className="text-sm text-slate-600">@watchanything_bot · {copy.botHint}</p>
         </div>
@@ -49,18 +48,20 @@ export function ConnectCard({ locale, onConnectTelegram }: ConnectCardProps) {
           className="h-11 rounded-2xl bg-violet-600 text-white hover:bg-violet-500"
           onClick={() => {
             onConnectTelegram({ username: "@watchanything_bot" });
-            setConnected(true);
           }}
         >
           {copy.connect}
         </Button>
-        <Button type="button" variant="outline" className="h-11 rounded-2xl">
+        <Link
+          href={`/rules?lang=${locale}`}
+          className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-2.5 text-sm font-medium text-slate-900 transition hover:bg-slate-100"
+        >
           {copy.skip}
-        </Button>
+        </Link>
       </div>
 
       <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-        {connected ? copy.connected : copy.waiting}
+        {copy.waiting}
       </div>
     </section>
   );

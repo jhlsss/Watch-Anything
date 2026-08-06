@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Locale } from "@/lib/i18n";
 import { getMessages } from "@/lib/i18n";
@@ -156,8 +157,13 @@ export function RulesForm({
                 {form.includeTopics.map((topic) => (
                   <span key={topic} className="inline-flex items-center gap-2 rounded-full bg-violet-50 px-3 py-2 text-sm text-violet-700">
                     {topic}
-                    <button type="button" onClick={() => removeTopic("includeTopics", topic)} aria-label={`remove-${topic}`}>
-                      ×
+                    <button
+                      type="button"
+                      onClick={() => removeTopic("includeTopics", topic)}
+                      aria-label={copy.removeTopic}
+                      className="rounded-full p-0.5 hover:bg-violet-100"
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />
                     </button>
                   </span>
                 ))}
@@ -191,8 +197,13 @@ export function RulesForm({
                 {form.excludeTopics.map((topic) => (
                   <span key={topic} className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-2 text-sm text-slate-700">
                     {topic}
-                    <button type="button" onClick={() => removeTopic("excludeTopics", topic)} aria-label={`remove-${topic}`}>
-                      ×
+                    <button
+                      type="button"
+                      onClick={() => removeTopic("excludeTopics", topic)}
+                      aria-label={copy.removeTopic}
+                      className="rounded-full p-0.5 hover:bg-slate-200"
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />
                     </button>
                   </span>
                 ))}
