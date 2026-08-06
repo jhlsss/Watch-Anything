@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { parseRules } from "@/lib/ai/parse-rules";
-import type { GroqLike } from "@/lib/ai/schemas";
+import type { AiLike } from "@/lib/ai/schemas";
 import { radarRulesSchema } from "@/lib/validation/radar-rules";
 
-// Regression: BLOCKER-01 — Groq daily token quota made long Rules generation fail.
+// Regression: BLOCKER-01 — provider daily token quota made long Rules generation fail.
 // Found by /qa on 2026-08-07
-// Report: screenshot supplied in the task; server log showed Groq TPD rate limiting.
+// Report: screenshot supplied in the task; server log showed provider TPD rate limiting.
 describe("parseRules provider fallback", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -20,8 +20,8 @@ describe("parseRules provider fallback", () => {
       "rule-token-secret-that-is-at-least-32-chars",
     );
     vi.stubEnv("TAVILY_API_KEY", "tavily-key");
-    vi.stubEnv("GROQ_API_KEY", "groq-key");
-    vi.stubEnv("GROQ_MODEL", "openai/gpt-oss-20b");
+    vi.stubEnv("GEMINI_API_KEY", "gemini-key");
+    vi.stubEnv("GEMINI_MODEL", "gemini-test-model");
     vi.stubEnv("TELEGRAM_BOT_TOKEN", "telegram-token");
     vi.stubEnv("TELEGRAM_BOT_USERNAME", "watch_anything_bot");
     vi.stubEnv("TELEGRAM_WEBHOOK_SECRET", "telegram-webhook-secret");
@@ -40,7 +40,7 @@ describe("parseRules provider fallback", () => {
     const create = vi.fn(async () => {
       throw rateLimitError;
     });
-    const groq: GroqLike = {
+    const ai: AiLike = {
       chat: {
         completions: { create },
       },
@@ -49,7 +49,7 @@ describe("parseRules provider fallback", () => {
     const rules = await parseRules({
       prompt:
         "Track official creator releases, tours and partnerships from trusted public sources.",
-      groq,
+      ai,
     });
 
     expect(radarRulesSchema.safeParse(rules).success).toBe(true);

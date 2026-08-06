@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { parseRules } from "@/lib/ai/parse-rules";
-import type { GroqLike } from "@/lib/ai/schemas";
+import type { AiLike } from "@/lib/ai/schemas";
 
-// Regression: BLOCKER-01 — a Groq 429 escaped the first Rules generation attempt.
+// Regression: BLOCKER-01 — a provider 429 escaped the first Rules generation attempt.
 // Found by /qa on 2026-08-07
 // Report: .gstack/qa-reports/qa-report-rules-followup-localhost-2026-08-07.md
 describe("parseRules rate-limit recovery", () => {
@@ -19,8 +19,8 @@ describe("parseRules rate-limit recovery", () => {
       "rule-token-secret-that-is-at-least-32-chars",
     );
     vi.stubEnv("TAVILY_API_KEY", "tavily-key");
-    vi.stubEnv("GROQ_API_KEY", "groq-key");
-    vi.stubEnv("GROQ_MODEL", "openai/gpt-oss-20b");
+    vi.stubEnv("GEMINI_API_KEY", "gemini-key");
+    vi.stubEnv("GEMINI_MODEL", "gemini-test-model");
     vi.stubEnv("TELEGRAM_BOT_TOKEN", "telegram-token");
     vi.stubEnv("TELEGRAM_BOT_USERNAME", "watch_anything_bot");
     vi.stubEnv("TELEGRAM_WEBHOOK_SECRET", "telegram-webhook-secret");
@@ -55,7 +55,7 @@ describe("parseRules rate-limit recovery", () => {
         ],
       };
     });
-    const groq: GroqLike = {
+    const ai: AiLike = {
       chat: {
         completions: { create },
       },
@@ -65,7 +65,7 @@ describe("parseRules rate-limit recovery", () => {
       parseRules({
         prompt:
           "Track official OpenAI product releases and major model updates from trusted public sources",
-        groq,
+        ai,
       }),
     ).resolves.toMatchObject({ radarName: "OpenAI Release Monitor" });
     expect(create).toHaveBeenCalledTimes(2);
@@ -79,8 +79,8 @@ describe("parseRules rate-limit recovery", () => {
       "rule-token-secret-that-is-at-least-32-chars",
     );
     vi.stubEnv("TAVILY_API_KEY", "tavily-key");
-    vi.stubEnv("GROQ_API_KEY", "groq-key");
-    vi.stubEnv("GROQ_MODEL", "openai/gpt-oss-20b");
+    vi.stubEnv("GEMINI_API_KEY", "gemini-key");
+    vi.stubEnv("GEMINI_MODEL", "gemini-test-model");
     vi.stubEnv("TELEGRAM_BOT_TOKEN", "telegram-token");
     vi.stubEnv("TELEGRAM_BOT_USERNAME", "watch_anything_bot");
     vi.stubEnv("TELEGRAM_WEBHOOK_SECRET", "telegram-webhook-secret");
@@ -99,7 +99,7 @@ describe("parseRules rate-limit recovery", () => {
     const create = vi.fn(async () => {
       throw rateLimitError;
     });
-    const groq: GroqLike = {
+    const ai: AiLike = {
       chat: {
         completions: { create },
       },
@@ -109,7 +109,7 @@ describe("parseRules rate-limit recovery", () => {
       parseRules({
         prompt:
           "Track official creator releases, tours and partnerships from trusted public sources.",
-        groq,
+        ai,
       }),
     ).resolves.toMatchObject({
       includeTopics: ["creator", "releases", "tours", "partnerships"],

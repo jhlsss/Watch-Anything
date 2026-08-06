@@ -10,6 +10,7 @@ import {
   evaluateCandidateItemSchema,
   evaluateCandidatesJsonSchema,
   parseRulesJsonSchema,
+  type AiLike,
 } from "@/lib/ai/schemas";
 import { evaluateCandidates } from "@/lib/ai/evaluate-candidates";
 import { parseRules } from "@/lib/ai/parse-rules";
@@ -50,16 +51,16 @@ const testServerEnv = {
   CRON_SECRET: "cron-secret",
   RULE_TOKEN_SECRET: "rule-token-secret-that-is-at-least-32-chars",
   TAVILY_API_KEY: "tavily-key",
-  GROQ_API_KEY: "groq-key",
+  GEMINI_API_KEY: "gemini-key",
   TELEGRAM_BOT_TOKEN: "telegram-token",
   TELEGRAM_BOT_USERNAME: "watch_anything_bot",
   TELEGRAM_WEBHOOK_SECRET: "telegram-webhook-secret",
 };
 
-function stubServerEnv(groqModel = "openai/gpt-oss-20b") {
+function stubServerEnv(geminiModel = "gemini-test-model") {
   for (const [name, value] of Object.entries({
     ...testServerEnv,
-    GROQ_MODEL: groqModel,
+    GEMINI_MODEL: geminiModel,
   })) {
     vi.stubEnv(name, value);
   }
@@ -75,12 +76,12 @@ async function captureError(operation: () => Promise<unknown>): Promise<unknown>
   throw new Error("Expected operation to reject.");
 }
 
-function createGroqStub(responses: string[]) {
+function createAiStub(responses: string[]) {
   const create = vi.fn(async () => {
     const content = responses.shift();
 
     if (content === undefined) {
-      throw new Error("No stubbed Groq response");
+      throw new Error("No stubbed AI response");
     }
 
     return {
@@ -101,7 +102,7 @@ function createGroqStub(responses: string[]) {
       },
     },
     create,
-  };
+  } satisfies AiLike & { create: typeof create };
 }
 
 afterEach(() => {
@@ -353,7 +354,7 @@ describe("fetchMusicNewsRss", () => {
 describe("parseRules", () => {
   it("uses strict schema output and appends the fixed interval", async () => {
     stubServerEnv();
-    const groq = createGroqStub([
+    const ai = createAiStub([
       JSON.stringify({
         radar_name: "LISA Official Radar",
         subject: "LISA",
@@ -367,15 +368,15 @@ describe("parseRules", () => {
 
     const parsed = await parseRules({
       prompt: "Track important LISA music updates",
-      groq,
+      ai,
     });
 
-    const [request] = groq.create.mock.calls[0] as unknown as [
+    const [request] = ai.create.mock.calls[0] as unknown as [
       Record<string, unknown>,
     ];
 
-    expect(request.model).toBe("openai/gpt-oss-20b");
-    expect(request.max_completion_tokens).toBe(2048);
+    expect(request.model).toBe("gemini-test-model");
+    expect(request.max_tokens).toBe(2048);
     expect(request.response_format).toEqual({
       type: "json_schema",
       json_schema: {
@@ -398,7 +399,7 @@ describe("parseRules", () => {
 
   it("retries exactly once when the first structured result fails Zod validation", async () => {
     stubServerEnv();
-    const groq = createGroqStub([
+    const ai = createAiStub([
       JSON.stringify({
         radar_name: "Broken rules",
         subject: "LISA",
@@ -416,10 +417,10 @@ describe("parseRules", () => {
 
     const parsed = await parseRules({
       prompt: "Track LISA singles",
-      groq,
+      ai,
     });
 
-    expect(groq.create).toHaveBeenCalledTimes(2);
+    expect(ai.create).toHaveBeenCalledTimes(2);
     expect(parsed.intervalMinutes).toBe(360);
   });
 
@@ -427,7 +428,7 @@ describe("parseRules", () => {
     "normalizes fractional and string importance thresholds from the model (%s)",
     async (importanceThreshold) => {
       stubServerEnv();
-      const groq = createGroqStub([
+      const ai = createAiStub([
         JSON.stringify({
           radar_name: "Company Updates Radar",
           subject: "Product launches and pricing",
@@ -442,7 +443,7 @@ describe("parseRules", () => {
       await expect(
         parseRules({
           prompt: "Track official company product launches and pricing.",
-          groq,
+          ai,
         }),
       ).resolves.toMatchObject({ importanceThreshold: 70 });
     },
@@ -450,7 +451,7 @@ describe("parseRules", () => {
 
   it("normalizes qualitative importance thresholds from the model", async () => {
     stubServerEnv();
-    const groq = createGroqStub([
+    const ai = createAiStub([
       JSON.stringify({
         radar_name: "OpenAI Release Monitor",
         subject: "OpenAI product releases and model updates",
@@ -465,14 +466,14 @@ describe("parseRules", () => {
     await expect(
       parseRules({
         prompt: "Track official OpenAI product releases and major model updates.",
-        groq,
+        ai,
       }),
     ).resolves.toMatchObject({ importanceThreshold: 75 });
   });
 
   it("retries rule output that cannot pass the confirmation constraints", async () => {
     stubServerEnv();
-    const groq = createGroqStub([
+    const ai = createAiStub([
       JSON.stringify({
         radar_name: "OpenAI Release Monitor",
         subject: "OpenAI product releases and model updates",
@@ -496,15 +497,15 @@ describe("parseRules", () => {
     await expect(
       parseRules({
         prompt: "Track official OpenAI product releases and major model updates.",
-        groq,
+        ai,
       }),
     ).resolves.toMatchObject({ includeTopics: ["product release"] });
-    expect(groq.create).toHaveBeenCalledTimes(2);
+    expect(ai.create).toHaveBeenCalledTimes(2);
   });
 
-  it("always uses GROQ_MODEL instead of a caller-supplied model", async () => {
-    stubServerEnv("configured-groq-model");
-    const groq = createGroqStub([
+  it("always uses GEMINI_MODEL instead of a caller-supplied model", async () => {
+    stubServerEnv("configured-gemini-model");
+    const ai = createAiStub([
       JSON.stringify({
         radar_name: "LISA Official Radar",
         subject: "LISA",
@@ -518,25 +519,25 @@ describe("parseRules", () => {
 
     const input = {
       prompt: "Track LISA singles",
-      groq,
+      ai,
       model: "caller-controlled-model",
     } as unknown as Parameters<typeof parseRules>[0];
 
     await parseRules(input);
 
-    const [request] = groq.create.mock.calls[0] as unknown as [
+    const [request] = ai.create.mock.calls[0] as unknown as [
       Record<string, unknown>,
     ];
-    expect(request.model).toBe("configured-groq-model");
+    expect(request.model).toBe("configured-gemini-model");
   });
 
-  it("maps raw Groq transport errors to a stable public error", async () => {
+  it("maps raw AI transport errors to a stable public error", async () => {
     stubServerEnv();
-    const privateProviderDetail = "groq provider response with internal details";
+    const privateProviderDetail = "provider response with internal details";
     const create = vi.fn(async () => {
       throw new Error(privateProviderDetail);
     });
-    const groq = {
+    const ai: AiLike = {
       chat: {
         completions: {
           create,
@@ -547,13 +548,13 @@ describe("parseRules", () => {
     const error = await captureError(() =>
       parseRules({
         prompt: "Track LISA singles",
-        groq,
+        ai,
       }),
     );
 
     expect(error).toMatchObject({
-      code: "GROQ_REQUEST_FAILED",
-      message: "Groq request failed.",
+      code: "AI_REQUEST_FAILED",
+      message: "AI provider request failed.",
     });
     expect(String(error)).not.toContain(privateProviderDetail);
   });
@@ -571,7 +572,7 @@ describe("evaluateCandidates", () => {
       excerpt: longExcerpt,
       publishedAt: "2026-08-03T00:00:00.000Z",
     }));
-    const groq = createGroqStub([
+    const ai = createAiStub([
       JSON.stringify(
         Array.from({ length: 8 }, (_, index) => ({
           relevant: index === 0,
@@ -588,10 +589,10 @@ describe("evaluateCandidates", () => {
     const result = await evaluateCandidates({
       rules,
       candidates,
-      groq,
+      ai,
     });
 
-    const [request] = groq.create.mock.calls[0] as unknown as [
+    const [request] = ai.create.mock.calls[0] as unknown as [
       Record<string, unknown>,
     ];
     const messages = request.messages as Array<{ content: string }>;
@@ -630,9 +631,9 @@ describe("evaluateCandidates", () => {
     });
   });
 
-  it("always uses GROQ_MODEL instead of a caller-supplied model", async () => {
-    stubServerEnv("configured-groq-model");
-    const groq = createGroqStub([
+  it("always uses GEMINI_MODEL instead of a caller-supplied model", async () => {
+    stubServerEnv("configured-gemini-model");
+    const ai = createAiStub([
       JSON.stringify([
         {
           relevant: true,
@@ -658,16 +659,16 @@ describe("evaluateCandidates", () => {
           publishedAt: null,
         },
       ],
-      groq,
+      ai,
       model: "caller-controlled-model",
     } as unknown as Parameters<typeof evaluateCandidates>[0];
 
     await evaluateCandidates(input);
 
-    const [request] = groq.create.mock.calls[0] as unknown as [
+    const [request] = ai.create.mock.calls[0] as unknown as [
       Record<string, unknown>,
     ];
-    expect(request.model).toBe("configured-groq-model");
+    expect(request.model).toBe("configured-gemini-model");
   });
 });
 

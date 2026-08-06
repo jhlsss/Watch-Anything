@@ -2,17 +2,17 @@ import type { RadarRules } from "@/types/contracts";
 import { z } from "zod";
 import {
   AiAdapterError,
-  createGroqClient,
+  createGeminiClient,
   createStructuredOutput,
   parseRulesJsonSchema,
   parseRulesStructuredSchema,
-  resolveGroqModel,
-  type GroqLike,
+  resolveGeminiModel,
+  type AiLike,
 } from "@/lib/ai/schemas";
 
 type ParseRulesInput = {
   prompt: string;
-  groq?: GroqLike;
+  ai?: AiLike;
 };
 
 const fallbackStopWords = new Set([
@@ -108,14 +108,14 @@ function buildRateLimitFallback(prompt: string): RadarRules {
 
 export async function parseRules({
   prompt,
-  groq = createGroqClient(),
+  ai = createGeminiClient(),
 }: ParseRulesInput): Promise<RadarRules> {
-  const model = resolveGroqModel();
+  const model = resolveGeminiModel();
   let parsed: z.infer<typeof parseRulesStructuredSchema>;
 
   try {
     parsed = await createStructuredOutput({
-      groq,
+      ai,
       model,
       schemaName: "parse_rules",
       jsonSchema: parseRulesJsonSchema,
@@ -134,7 +134,7 @@ export async function parseRules({
       ],
     });
   } catch (error) {
-    if (error instanceof AiAdapterError && error.code === "GROQ_RATE_LIMITED") {
+    if (error instanceof AiAdapterError && error.code === "AI_RATE_LIMITED") {
       return buildRateLimitFallback(prompt);
     }
 

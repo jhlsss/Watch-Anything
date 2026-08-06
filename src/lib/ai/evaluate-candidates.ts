@@ -1,12 +1,12 @@
 import { z } from "zod";
 import type { Candidate, RadarRules } from "@/types/contracts";
 import {
-  createGroqClient,
+  createGeminiClient,
   createStructuredOutput,
   evaluateCandidateItemSchema,
   evaluateCandidatesJsonSchema,
-  resolveGroqModel,
-  type GroqLike,
+  resolveGeminiModel,
+  type AiLike,
 } from "@/lib/ai/schemas";
 
 export interface CandidateEvaluation {
@@ -17,7 +17,7 @@ export interface CandidateEvaluation {
 type EvaluateCandidatesInput = {
   rules: RadarRules;
   candidates: Candidate[];
-  groq?: GroqLike;
+  ai?: AiLike;
 };
 
 function trimExcerpt(excerpt: string): string {
@@ -27,9 +27,9 @@ function trimExcerpt(excerpt: string): string {
 export async function evaluateCandidates({
   rules,
   candidates,
-  groq = createGroqClient(),
+  ai = createGeminiClient(),
 }: EvaluateCandidatesInput): Promise<CandidateEvaluation[]> {
-  const model = resolveGroqModel();
+  const model = resolveGeminiModel();
   const selectedCandidates = candidates.slice(0, 8);
 
   if (selectedCandidates.length === 0) {
@@ -46,7 +46,7 @@ export async function evaluateCandidates({
     .length(selectedCandidates.length);
 
   const evaluations = await createStructuredOutput({
-    groq,
+    ai,
     model,
     schemaName: "evaluate_candidates",
     jsonSchema: evaluateCandidatesJsonSchema,
