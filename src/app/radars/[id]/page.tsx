@@ -96,6 +96,7 @@ const copy = {
     telegramDescription: "Important findings from this Radar are sent to your connected private chat.",
     telegramNotConnected: "Telegram not connected",
     telegramNotConnectedDescription: "Connect Telegram to receive important findings.",
+    telegramDataError: "Telegram status could not be loaded.",
     manage: "Manage Telegram",
     findingsTitle: "Latest findings",
     findingsDescription: "Important results saved for this Radar.",
@@ -132,6 +133,7 @@ const copy = {
     telegramDescription: "这个 Radar 的重要发现会发送到你已连接的 Telegram 私聊。",
     telegramNotConnected: "Telegram 未连接",
     telegramNotConnectedDescription: "连接 Telegram 后才能收到重要发现。",
+    telegramDataError: "Telegram 状态加载失败，请稍后重试。",
     manage: "管理 Telegram",
     findingsTitle: "最新发现",
     findingsDescription: "保存到这个 Radar 的重要结果。",
@@ -224,7 +226,7 @@ export default async function RadarDetailPage({ params, searchParams }: { params
     redirect("/auth?mode=login&next=dashboard");
   }
 
-  const [{ data: profile }, { data: radarData, error: radarError }, { data: connection }] = await Promise.all([
+  const [{ data: profile, error: profileError }, { data: radarData, error: radarError }, { data: connection, error: connectionError }] = await Promise.all([
     supabase.from("profiles").select("locale").eq("id", user.id).maybeSingle(),
     supabase
       .from("radars")
@@ -238,6 +240,7 @@ export default async function RadarDetailPage({ params, searchParams }: { params
   const paramsValue = await searchParams;
   const locale = await resolveLocale(paramsValue, (profile as { locale?: string } | null)?.locale ?? null);
   const labels = copy[locale];
+  const localize = (href: string) => `${href}?lang=${locale}`;
 
   if (radarError) {
     return (
@@ -338,7 +341,7 @@ export default async function RadarDetailPage({ params, searchParams }: { params
   const hours = Math.max(1, Math.round(rules.intervalMinutes / 60));
   const statusLabel = radar.status === "paused" ? labels.statusPaused : labels.statusActive;
   const username = connection?.telegram_username ? `@${String(connection.telegram_username).replace(/^@/, "")}` : null;
-  const dataError = Boolean(findingError || runError || notificationError);
+  const dataError = Boolean(profileError || connectionError || findingError || runError || notificationError);
   const lastCheckLabel = radar.last_checked_at ? formatDate(radar.last_checked_at, locale) : labels.noCheck;
   const nextCheckLabel = radar.status === "paused"
     ? labels.pausedNext
@@ -353,7 +356,7 @@ export default async function RadarDetailPage({ params, searchParams }: { params
         <div className="mx-auto w-full max-w-6xl min-w-0">
           <header className="flex min-w-0 flex-wrap items-start justify-between gap-5">
             <div className="min-w-0">
-              <Link href="/radars" className="inline-flex items-center gap-1 text-sm font-semibold text-violet-700 hover:text-violet-900">
+              <Link href={localize("/radars")} className="inline-flex items-center gap-1 text-sm font-semibold text-violet-700 hover:text-violet-900">
                 <ArrowLeft className="h-4 w-4" aria-hidden="true" />
                 {labels.back}
               </Link>
@@ -471,14 +474,16 @@ export default async function RadarDetailPage({ params, searchParams }: { params
 
               <section className="rounded-3xl border border-violet-100 bg-violet-50 p-5">
                 <div className="flex items-start gap-3">
-                  {connection ? <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" aria-hidden="true" /> : <Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden="true" />}
+                  {connectionError ? <Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden="true" /> : connection ? <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" aria-hidden="true" /> : <Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden="true" />}
                   <div className="min-w-0">
-                    <h2 className="font-semibold text-slate-950">{connection ? labels.telegramConnected : labels.telegramNotConnected}</h2>
-                    <p className="mt-2 text-sm leading-6 text-slate-700">{connection ? labels.telegramDescription : labels.telegramNotConnectedDescription}</p>
-                    <Link href="/connect-telegram" className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-violet-700 hover:text-violet-900">
-                      {connection ? labels.manage : labels.manage}
-                      <Send className="h-4 w-4" aria-hidden="true" />
-                    </Link>
+                    <h2 className="font-semibold text-slate-950">{connectionError ? labels.telegramDataError : connection ? labels.telegramConnected : labels.telegramNotConnected}</h2>
+                    <p className="mt-2 text-sm leading-6 text-slate-700">{connectionError ? labels.dataError : connection ? labels.telegramDescription : labels.telegramNotConnectedDescription}</p>
+                    {connectionError ? null : (
+                      <Link href={localize("/connect-telegram")} className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-violet-700 hover:text-violet-900">
+                        {labels.manage}
+                        <Send className="h-4 w-4" aria-hidden="true" />
+                      </Link>
+                    )}
                     {username ? <p className="mt-2 text-xs text-slate-500">{username}</p> : null}
                   </div>
                 </div>

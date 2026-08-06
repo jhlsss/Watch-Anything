@@ -19,7 +19,9 @@ import { RadarCard, type RadarCardRadar } from "@/components/radar/radar-card";
 import { FindingsList, type FindingsListFinding } from "@/components/radar/findings-list";
 import { RadarActions, WorkspaceLocaleSwitcher, WorkspaceNavigation } from "@/components/radar/radar-actions";
 import { RunHistory, type RunHistoryRun } from "@/components/radar/run-history";
+import DashboardPage from "@/app/dashboard/page";
 import RadarDetailPage from "@/app/radars/[id]/page";
+import RadarsPage from "@/app/radars/page";
 import { createClient } from "@/lib/supabase/client";
 
 vi.mock("next/navigation", () => ({
@@ -57,6 +59,21 @@ function makeQuery(result: QueryResult): QueryBuilder {
     then: (onFulfilled, onRejected) => resolve().then(onFulfilled, onRejected),
   };
   return builder;
+}
+
+const testUser = {
+  id: "user-1",
+  email: "test@example.com",
+  user_metadata: {},
+};
+
+function setServerClient(fromMock: ReturnType<typeof vi.fn>) {
+  createServerClientMock.mockReturnValue({
+    auth: {
+      getUser: vi.fn().mockResolvedValue({ data: { user: testUser } }),
+    },
+    from: fromMock,
+  });
 }
 
 const openAiRadar: RadarCardRadar = {
@@ -131,6 +148,19 @@ const runs: RunHistoryRun[] = [
   },
 ];
 
+const detailRadarRow = {
+  id: openAiRadar.id,
+  user_id: testUser.id,
+  name: openAiRadar.name,
+  original_prompt: openAiRadar.name,
+  rules: { includeTopics: openAiRadar.includeTopics, excludeTopics: [] },
+  status: "active" as const,
+  interval_minutes: 60,
+  last_checked_at: null,
+  next_check_at: null,
+  created_at: "2026-08-06T08:00:00.000Z",
+};
+
 describe("RadarCard", () => {
   afterEach(() => {
     cleanup();
@@ -146,7 +176,7 @@ describe("RadarCard", () => {
 
     expect(screen.getByText("OpenAI Releases")).toBeInTheDocument();
     expect(screen.getByText("已暂停")).toBeInTheDocument();
-    expect(screen.getByRole("link")).toHaveAttribute("href", `/radars/${openAiRadar.id}`);
+    expect(screen.getByRole("link")).toHaveAttribute("href", `/radars/${openAiRadar.id}?lang=zh-CN`);
   });
 
   it("keeps distinct radar ids when rendering multiple cards", () => {
@@ -159,11 +189,11 @@ describe("RadarCard", () => {
 
     expect(screen.getByRole("link", { name: /LISA Official Radar/i })).toHaveAttribute(
       "href",
-      `/radars/${lisaRadar.id}`,
+      `/radars/${lisaRadar.id}?lang=en`,
     );
     expect(screen.getByRole("link", { name: /OpenAI Releases/i })).toHaveAttribute(
       "href",
-      `/radars/${openAiRadar.id}`,
+      `/radars/${openAiRadar.id}?lang=en`,
     );
   });
 
@@ -176,6 +206,10 @@ describe("RadarCard", () => {
     expect(screen.getByRole("link", { name: /view source/i })).toHaveAttribute(
       "href",
       finding.sourceUrl,
+    );
+    expect(screen.getByRole("link", { name: lisaRadar.name })).toHaveAttribute(
+      "href",
+      `/radars/${finding.radarId}?lang=en`,
     );
   });
 
@@ -317,8 +351,66 @@ describe("RadarCard", () => {
     });
   });
 
+  it("blocks invalid rule values before making an update request", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <RadarActions
+        radarId={lisaRadar.id}
+        status="active"
+        locale="en"
+        rules={{ radarName: lisaRadar.name, includeTopics: lisaRadar.includeTopics, excludeTopics: [] }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit rules" }));
+    fireEvent.change(screen.getByLabelText("Radar name"), { target: { value: "a" } });
+    const textboxes = screen.getAllByRole("textbox");
+    fireEvent.change(textboxes[1], { target: { value: "" } });
+    fireEvent.change(textboxes[2], {
+      target: { value: `${"x".repeat(61)}\n${Array.from({ length: 8 }, (_, index) => `topic-${index + 1}`).join("\n")}` },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save rules" }));
+
+    expect(screen.getByText("Radar name must be 2–80 characters.")).toBeInTheDocument();
+    expect(screen.getByText("Include 1–8 topics, with each topic 1–60 characters.")).toBeInTheDocument();
+    expect(screen.getByText("Exclude up to 8 topics, with each topic 1–60 characters.")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects rule values above the server limits", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <RadarActions
+        radarId={lisaRadar.id}
+        status="active"
+        locale="zh-CN"
+        rules={{ radarName: lisaRadar.name, includeTopics: lisaRadar.includeTopics, excludeTopics: [] }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑规则" }));
+    fireEvent.change(screen.getByLabelText("Radar 名称"), { target: { value: "x".repeat(81) } });
+    const textboxes = screen.getAllByRole("textbox");
+    fireEvent.change(textboxes[1], {
+      target: { value: Array.from({ length: 9 }, (_, index) => `topic-${index + 1}`).join("\n") },
+    });
+    fireEvent.change(textboxes[2], { target: { value: "topic-1\n".repeat(9) } });
+    fireEvent.click(screen.getByRole("button", { name: "保存规则" }));
+
+    expect(screen.getByText("Radar 名称需为 2–80 个字符。")).toBeInTheDocument();
+    expect(screen.getByText("关注项需为 1–8 项，每项 1–60 个字符。")).toBeInTheDocument();
+    expect(screen.getByText("排除项最多 8 项，每项 1–60 个字符。")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("does not write a locale cookie when the profile update fails", async () => {
-    const eqMock = vi.fn().mockResolvedValue({ error: new Error("profile update failed") });
+    const singleMock = vi.fn().mockResolvedValue({ data: null, error: new Error("profile update failed") });
+    const selectMock = vi.fn().mockReturnValue({ single: singleMock });
+    const eqMock = vi.fn().mockReturnValue({ select: selectMock });
     const updateMock = vi.fn().mockReturnValue({ eq: eqMock });
     const fromMock = vi.fn().mockReturnValue({ update: updateMock });
     vi.mocked(createClient).mockReturnValue({ from: fromMock } as never);
@@ -330,6 +422,24 @@ describe("RadarCard", () => {
     await waitFor(() => expect(screen.getByText("Language preference could not be saved.")).toBeInTheDocument());
     expect(document.cookie).not.toContain("wa_locale=zh-CN");
     expect(eqMock).toHaveBeenCalledWith("id", "user-1");
+    expect(singleMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not write a locale cookie when no profile row is updated", async () => {
+    const singleMock = vi.fn().mockResolvedValue({ data: null, error: null });
+    const selectMock = vi.fn().mockReturnValue({ single: singleMock });
+    const eqMock = vi.fn().mockReturnValue({ select: selectMock });
+    const updateMock = vi.fn().mockReturnValue({ eq: eqMock });
+    const fromMock = vi.fn().mockReturnValue({ update: updateMock });
+    vi.mocked(createClient).mockReturnValue({ from: fromMock } as never);
+
+    render(<WorkspaceLocaleSwitcher locale="en" userId="user-1" path="/dashboard" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+
+    await waitFor(() => expect(screen.getByText("Language preference could not be saved.")).toBeInTheDocument());
+    expect(document.cookie).not.toContain("wa_locale=zh-CN");
+    expect(singleMock).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the current locale on desktop and mobile workspace links", () => {
@@ -363,5 +473,105 @@ describe("RadarCard", () => {
     render(page as ReactElement);
     expect(screen.getByRole("alert")).toHaveTextContent("Some live details could not be loaded. Refresh and try again.");
     expect(notFoundMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the current locale on Dashboard Telegram, attention, and view-all links", async () => {
+    const fromMock = vi
+      .fn()
+      .mockImplementationOnce(() => makeQuery({ data: { locale: "en" }, error: null }))
+      .mockImplementationOnce(() => makeQuery({ data: null, error: null }))
+      .mockImplementationOnce(() => makeQuery({
+        data: [{ id: lisaRadar.id, name: lisaRadar.name, status: "active" }],
+        error: null,
+      }))
+      .mockImplementationOnce(() => makeQuery({ data: [], error: null }))
+      .mockImplementationOnce(() => makeQuery({
+        data: [{ radar_id: lisaRadar.id, status: "failed", created_at: "2026-08-06T08:00:00.000Z" }],
+        error: null,
+      }));
+    setServerClient(fromMock);
+
+    const page = await DashboardPage({ searchParams: Promise.resolve({ lang: "zh-CN" }) });
+    render(page as ReactElement);
+
+    expect(screen.getByRole("link", { name: "连接" })).toHaveAttribute("href", "/connect-telegram?lang=zh-CN");
+    expect(screen.getByRole("link", { name: /Telegram 尚未连接/ })).toHaveAttribute("href", "/connect-telegram?lang=zh-CN");
+    expect(screen.getByRole("link", { name: /LISA Official Radar 需要重试/ })).toHaveAttribute(
+      "href",
+      `/radars/${lisaRadar.id}?lang=zh-CN`,
+    );
+    expect(screen.getByRole("link", { name: /查看全部 Radar/ })).toHaveAttribute("href", "/radars?lang=zh-CN");
+  });
+
+  it("does not show the Radars empty state when the radar query fails", async () => {
+    const fromMock = vi
+      .fn()
+      .mockImplementationOnce(() => makeQuery({ data: { locale: "zh-CN" }, error: null }))
+      .mockImplementationOnce(() => makeQuery({ data: null, error: { message: "database unavailable" } }));
+    setServerClient(fromMock);
+
+    const page = await RadarsPage({ searchParams: Promise.resolve({ lang: "zh-CN" }) });
+    render(page as ReactElement);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("部分 Radar 数据加载失败，请刷新后重试。");
+    expect(screen.getByRole("link", { name: "返回 Dashboard" })).toHaveAttribute("href", "/dashboard?lang=zh-CN");
+    expect(screen.queryByText("还没有 Radar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "创建第一个 Radar" })).not.toBeInTheDocument();
+  });
+
+  it("does not show the Dashboard empty findings guide when radar data fails", async () => {
+    const fromMock = vi
+      .fn()
+      .mockImplementationOnce(() => makeQuery({ data: { locale: "en" }, error: null }))
+      .mockImplementationOnce(() => makeQuery({ data: { telegram_username: "watcher" }, error: null }))
+      .mockImplementationOnce(() => makeQuery({ data: null, error: { message: "database unavailable" } }));
+    setServerClient(fromMock);
+
+    const page = await DashboardPage({ searchParams: Promise.resolve({ lang: "en" }) });
+    render(page as ReactElement);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Some live data could not be loaded. Refresh and try again.");
+    expect(screen.queryByText("No important findings yet")).not.toBeInTheDocument();
+    expect(screen.queryByText("Your next successful check will appear here.")).not.toBeInTheDocument();
+  });
+
+  it("keeps the current locale on Radar detail back and Telegram management links", async () => {
+    const fromMock = vi
+      .fn()
+      .mockImplementationOnce(() => makeQuery({ data: { locale: "en" }, error: null }))
+      .mockImplementationOnce(() => makeQuery({ data: detailRadarRow, error: null }))
+      .mockImplementationOnce(() => makeQuery({ data: null, error: null }))
+      .mockImplementationOnce(() => makeQuery({ data: [], error: null }))
+      .mockImplementationOnce(() => makeQuery({ data: [], error: null }));
+    setServerClient(fromMock);
+
+    const page = await RadarDetailPage({
+      params: Promise.resolve({ id: detailRadarRow.id }),
+      searchParams: Promise.resolve({ lang: "zh-CN" }),
+    });
+    render(page as ReactElement);
+
+    expect(screen.getByRole("link", { name: "我的 Radars" })).toHaveAttribute("href", "/radars?lang=zh-CN");
+    expect(screen.getByRole("link", { name: "管理 Telegram" })).toHaveAttribute("href", "/connect-telegram?lang=zh-CN");
+  });
+
+  it("includes profile and Telegram query errors in the Radar detail data error", async () => {
+    const fromMock = vi
+      .fn()
+      .mockImplementationOnce(() => makeQuery({ data: null, error: { message: "profile unavailable" } }))
+      .mockImplementationOnce(() => makeQuery({ data: detailRadarRow, error: null }))
+      .mockImplementationOnce(() => makeQuery({ data: null, error: { message: "telegram unavailable" } }))
+      .mockImplementationOnce(() => makeQuery({ data: [], error: null }))
+      .mockImplementationOnce(() => makeQuery({ data: [], error: null }));
+    setServerClient(fromMock);
+
+    const page = await RadarDetailPage({
+      params: Promise.resolve({ id: detailRadarRow.id }),
+      searchParams: Promise.resolve({ lang: "en" }),
+    });
+    render(page as ReactElement);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Some live details could not be loaded. Refresh and try again.");
+    expect(screen.queryByText("Telegram not connected")).not.toBeInTheDocument();
   });
 });

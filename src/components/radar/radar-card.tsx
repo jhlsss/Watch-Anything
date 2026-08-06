@@ -63,7 +63,7 @@ export function RadarCard({ radar, locale }: { radar: RadarCardRadar; locale: Lo
   return (
     <article className="min-w-0 rounded-3xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-violet-200 hover:shadow-md">
       <Link
-        href={`/radars/${radar.id}`}
+        href={`/radars/${radar.id}?lang=${locale}`}
         aria-label={radar.name}
         className="block min-w-0 p-5 outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-inset"
       >

@@ -176,6 +176,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const params = await searchParams;
   const locale = await resolveLocale(params, (profile as { locale?: string } | null)?.locale ?? null);
   const labels = copy[locale];
+  const localize = (href: string) => `${href}?lang=${locale}`;
   const radars = (radarData ?? []) as RadarRow[];
   const radarNames = new Map(radars.map((radar) => [radar.id, radar.name]));
   const radarIds = radars.map((radar) => radar.id);
@@ -221,6 +222,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     }
   }
 
+  const workspaceDataError = Boolean(profileError || connectionError || radarError || childQueryError);
+
   const notificationStatuses = new Map<string, NotificationStatus>();
   notificationRows.forEach((row) => {
     if (!notificationStatuses.has(row.finding_id)) {
@@ -240,7 +243,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     attentionItems.push({
       title: labels.telegramAttention,
       description: labels.telegramAttentionDescription,
-      href: "/connect-telegram",
+      href: localize("/connect-telegram"),
     });
   }
   radars.forEach((radar) => {
@@ -248,15 +251,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       attentionItems.push({
         title: labels.failedAttention(radar.name),
         description: labels.failedAttentionDescription,
-        href: `/radars/${radar.id}`,
+        href: localize(`/radars/${radar.id}`),
       });
     }
   });
-  if (profileError || connectionError || radarError || childQueryError) {
+  if (workspaceDataError) {
     attentionItems.push({
       title: labels.dataAttention,
       description: labels.dataAttentionDescription,
-      href: "/dashboard",
+      href: localize("/dashboard"),
     });
   }
 
@@ -299,12 +302,18 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               </p>
             </div>
             <Link
-              href="/connect-telegram"
+              href={localize("/connect-telegram")}
               className="inline-flex h-10 shrink-0 items-center justify-center rounded-xl border border-violet-200 bg-white px-3 text-sm font-semibold text-violet-700 transition hover:bg-violet-100"
             >
               {connection ? labels.manage : labels.connect}
             </Link>
           </section>
+
+          {workspaceDataError ? (
+            <p role="alert" className="mt-4 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+              {labels.dataAttentionDescription}
+            </p>
+          ) : null}
 
           <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm">
             <span><strong className="text-slate-950">{activeCount}</strong> <span className="text-slate-600">{labels.running}</span></span>
@@ -346,12 +355,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   <h2 className="text-lg font-semibold text-slate-950">{labels.latestTitle}</h2>
                   <p className="mt-1 text-sm text-slate-500">{labels.acrossAll}</p>
                 </div>
-                <Link href="/radars" className="inline-flex items-center gap-1 text-sm font-semibold text-violet-700 hover:text-violet-900">
+                <Link href={localize("/radars")} className="inline-flex items-center gap-1 text-sm font-semibold text-violet-700 hover:text-violet-900">
                   {labels.viewAll}
                   <ArrowRight className="h-4 w-4" aria-hidden="true" />
                 </Link>
               </div>
-              {findings.length === 0 ? (
+              {workspaceDataError ? (
+                <div className="rounded-3xl border border-amber-100 bg-amber-50 p-8 text-center">
+                  <p className="font-semibold text-amber-900">{labels.dataAttention}</p>
+                  <p className="mt-2 text-sm leading-6 text-amber-800">{labels.dataAttentionDescription}</p>
+                </div>
+              ) : findings.length === 0 ? (
                 <div className="rounded-3xl border border-dashed border-slate-300 bg-white p-8 text-center">
                   <p className="font-semibold text-slate-900">{labels.emptyTitle}</p>
                   <p className="mt-2 text-sm leading-6 text-slate-600">{labels.emptyDescription}</p>

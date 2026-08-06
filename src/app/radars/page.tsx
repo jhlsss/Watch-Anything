@@ -114,6 +114,7 @@ export default async function RadarsPage({ searchParams }: { searchParams: Searc
   const params = await searchParams;
   const locale = await resolveLocale(params, (profile as { locale?: string } | null)?.locale ?? null);
   const labels = copy[locale];
+  const localize = (href: string) => `${href}?lang=${locale}`;
   const radars = (radarData ?? []) as RadarRow[];
   const radarIds = radars.map((radar) => radar.id);
   let findingRows: FindingCountRow[] = [];
@@ -137,6 +138,7 @@ export default async function RadarsPage({ searchParams }: { searchParams: Searc
   });
 
   const activeCount = radars.filter((radar) => radar.status === "active").length;
+  const dataError = Boolean(radarError || findingError);
 
   return (
     <div className="flex min-h-screen min-w-0 bg-slate-50 text-slate-950">
@@ -163,19 +165,19 @@ export default async function RadarsPage({ searchParams }: { searchParams: Searc
 
           <div className="mt-7 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm">
             <p className="font-semibold text-slate-900">{labels.activeSummary(activeCount, radars.length)}</p>
-            <Link href="/dashboard" className="inline-flex items-center gap-1 text-sm font-semibold text-violet-700 hover:text-violet-900">
+            <Link href={localize("/dashboard")} className="inline-flex items-center gap-1 text-sm font-semibold text-violet-700 hover:text-violet-900">
               {labels.backDashboard}
               <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </Link>
           </div>
 
-          {radarError || findingError ? (
+          {dataError ? (
             <p role="alert" className="mt-4 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
               {labels.loadError}
             </p>
           ) : null}
 
-          {radars.length === 0 ? (
+          {radars.length === 0 && !dataError ? (
             <section className="mt-7 rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center shadow-sm">
               <h2 className="text-lg font-semibold text-slate-950">{labels.emptyTitle}</h2>
               <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-600">{labels.emptyDescription}</p>

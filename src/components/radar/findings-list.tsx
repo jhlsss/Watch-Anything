@@ -104,7 +104,7 @@ export function FindingsList({
             <div className="min-w-0">
               {finding.radarName ? (
                 <Link
-                  href={`/radars/${finding.radarId}`}
+                  href={`/radars/${finding.radarId}?lang=${locale}`}
                   className="text-xs font-extrabold uppercase tracking-[0.12em] text-violet-600 hover:text-violet-800"
                 >
                   {finding.radarName}

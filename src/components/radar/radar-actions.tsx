@@ -28,6 +28,9 @@ const actionCopy = {
     include: "Include topics",
     exclude: "Exclude topics",
     includeHint: "One topic per line",
+    validationName: "Radar name must be 2–80 characters.",
+    validationInclude: "Include 1–8 topics, with each topic 1–60 characters.",
+    validationExclude: "Exclude up to 8 topics, with each topic 1–60 characters.",
     actionError: "The action could not be completed. Please try again.",
     limitError: "This Radar cannot be resumed while three Radars are active.",
     localeError: "Language preference could not be saved.",
@@ -45,6 +48,9 @@ const actionCopy = {
     include: "关注项",
     exclude: "排除项",
     includeHint: "每行填写一项",
+    validationName: "Radar 名称需为 2–80 个字符。",
+    validationInclude: "关注项需为 1–8 项，每项 1–60 个字符。",
+    validationExclude: "排除项最多 8 项，每项 1–60 个字符。",
     actionError: "操作未完成，请稍后重试。",
     limitError: "当前已有 3 个运行中的 Radar，暂时无法恢复此 Radar。",
     localeError: "语言偏好保存失败。",
@@ -140,8 +146,8 @@ export function WorkspaceLocaleSwitcher({
     setIsSaving(true);
     try {
       const supabase = createClient();
-      const result = await supabase.from("profiles").update({ locale: nextLocale }).eq("id", userId);
-      if (result.error) {
+      const result = await supabase.from("profiles").update({ locale: nextLocale }).eq("id", userId).select("id").single();
+      if (result.error || !result.data) {
         setError(true);
         setIsSaving(false);
         return;
@@ -189,6 +195,8 @@ interface EditableRules {
   excludeTopics: string[];
 }
 
+type RuleFieldErrors = Partial<Record<keyof EditableRules, string>>;
+
 type ActionKind = "status" | "run" | "edit";
 
 export function RadarActions({
@@ -210,6 +218,7 @@ export function RadarActions({
   const [radarName, setRadarName] = useState(rules.radarName);
   const [includeTopics, setIncludeTopics] = useState(rules.includeTopics.join("\n"));
   const [excludeTopics, setExcludeTopics] = useState(rules.excludeTopics.join("\n"));
+  const [fieldErrors, setFieldErrors] = useState<RuleFieldErrors>({});
 
   const request = async (kind: ActionKind, init: RequestInit): Promise<boolean> => {
     setBusy(kind);
@@ -256,15 +265,38 @@ export function RadarActions({
   const saveRules = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const splitTopics = (value: string) => value.split(/[\n,]/).map((topic) => topic.trim()).filter(Boolean);
+    const nextRadarName = radarName.trim();
+    const nextIncludeTopics = splitTopics(includeTopics);
+    const nextExcludeTopics = splitTopics(excludeTopics);
+    const nextFieldErrors: RuleFieldErrors = {};
+
+    setError(null);
+    setFieldErrors({});
+
+    const validTopicList = (topics: string[], minimum: number) =>
+      topics.length >= minimum && topics.length <= 8 && topics.every((topic) => topic.length >= 1 && topic.length <= 60);
+    if (nextRadarName.length < 2 || nextRadarName.length > 80) {
+      nextFieldErrors.radarName = labels.validationName;
+    }
+    if (!validTopicList(nextIncludeTopics, 1)) {
+      nextFieldErrors.includeTopics = labels.validationInclude;
+    }
+    if (!validTopicList(nextExcludeTopics, 0)) {
+      nextFieldErrors.excludeTopics = labels.validationExclude;
+    }
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setFieldErrors(nextFieldErrors);
+      return;
+    }
 
     const succeeded = await request("edit", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "update_rules",
-        radarName: radarName.trim(),
-        includeTopics: splitTopics(includeTopics),
-        excludeTopics: splitTopics(excludeTopics),
+        radarName: nextRadarName,
+        includeTopics: nextIncludeTopics,
+        excludeTopics: nextExcludeTopics,
       }),
     });
 
@@ -319,8 +351,10 @@ export function RadarActions({
             <input
               value={radarName}
               onChange={(event) => setRadarName(event.target.value)}
+              aria-invalid={Boolean(fieldErrors.radarName)}
               className="min-h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-normal outline-none focus:border-violet-400"
             />
+            {fieldErrors.radarName ? <p role="alert" className="text-xs font-normal text-rose-600">{fieldErrors.radarName}</p> : null}
           </label>
           <label className="grid gap-1.5 text-sm font-semibold text-slate-800">
             {labels.include}
@@ -328,18 +362,22 @@ export function RadarActions({
             <textarea
               value={includeTopics}
               onChange={(event) => setIncludeTopics(event.target.value)}
+              aria-invalid={Boolean(fieldErrors.includeTopics)}
               rows={3}
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal outline-none focus:border-violet-400"
             />
+            {fieldErrors.includeTopics ? <p role="alert" className="text-xs font-normal text-rose-600">{fieldErrors.includeTopics}</p> : null}
           </label>
           <label className="grid gap-1.5 text-sm font-semibold text-slate-800">
             {labels.exclude}
             <textarea
               value={excludeTopics}
               onChange={(event) => setExcludeTopics(event.target.value)}
+              aria-invalid={Boolean(fieldErrors.excludeTopics)}
               rows={3}
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal outline-none focus:border-violet-400"
             />
+            {fieldErrors.excludeTopics ? <p role="alert" className="text-xs font-normal text-rose-600">{fieldErrors.excludeTopics}</p> : null}
           </label>
           <div className="flex flex-wrap gap-2">
             <button
