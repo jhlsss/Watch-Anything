@@ -23,7 +23,7 @@ describe("parseServerEnv", () => {
 });
 
 describe("parsePublicEnv", () => {
-  it("parses the public application and Supabase settings", async () => {
+  it("parses the public Supabase settings", async () => {
     const { parsePublicEnv } = await import("@/lib/env");
 
     expect(
@@ -33,7 +33,20 @@ describe("parsePublicEnv", () => {
         NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "publishable-key",
       }),
     ).toEqual({
-      NEXT_PUBLIC_APP_URL: "http://localhost:3000",
+      NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "publishable-key",
+    });
+  });
+
+  it("does not require the app URL to create a Supabase client", async () => {
+    const { parsePublicEnv } = await import("@/lib/env");
+
+    expect(
+      parsePublicEnv({
+        NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
+        NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "publishable-key",
+      }),
+    ).toEqual({
       NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "publishable-key",
     });
