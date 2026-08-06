@@ -47,6 +47,16 @@ alter table public.run_findings enable row level security;
 grant all on public.radar_sources to service_role;
 grant all on public.run_findings to service_role;
 
+do $$
+begin
+  if to_regprocedure('public.create_radar_from_setup(uuid, uuid)') is not null then
+    execute 'revoke all on function public.create_radar_from_setup(uuid, uuid) from public, anon, authenticated';
+  end if;
+end;
+$$;
+
+drop function if exists public.create_radar_from_setup(uuid, uuid);
+
 create or replace function public.create_radar_from_setup(
   p_setup_id uuid,
   p_user_id uuid,
@@ -64,17 +74,19 @@ declare
   active_count integer;
   deadline_ms bigint;
 begin
-  if p_deadline_at is not null then
-    if p_deadline_at <= clock_timestamp() then
-      raise exception 'CREATE_DEADLINE_EXCEEDED';
-    end if;
-    deadline_ms := greatest(
-      1::numeric,
-      ceil(extract(epoch from (p_deadline_at - clock_timestamp())) * 1000)
-    )::bigint;
-    perform set_config('lock_timeout', deadline_ms::text, true);
-    perform set_config('statement_timeout', deadline_ms::text, true);
+  if p_deadline_at is null then
+    raise exception 'CREATE_DEADLINE_REQUIRED';
   end if;
+
+  if p_deadline_at <= clock_timestamp() then
+    raise exception 'CREATE_DEADLINE_EXCEEDED';
+  end if;
+  deadline_ms := greatest(
+    1::numeric,
+    ceil(extract(epoch from (p_deadline_at - clock_timestamp())) * 1000)
+  )::bigint;
+  perform set_config('lock_timeout', deadline_ms::text, true);
+  perform set_config('statement_timeout', deadline_ms::text, true);
 
   select p.id
     into profile_id
@@ -86,17 +98,15 @@ begin
     raise exception 'PROFILE_NOT_FOUND';
   end if;
 
-  if p_deadline_at is not null then
-    if p_deadline_at <= clock_timestamp() then
-      raise exception 'CREATE_DEADLINE_EXCEEDED';
-    end if;
-    deadline_ms := greatest(
-      1::numeric,
-      ceil(extract(epoch from (p_deadline_at - clock_timestamp())) * 1000)
-    )::bigint;
-    perform set_config('lock_timeout', deadline_ms::text, true);
-    perform set_config('statement_timeout', deadline_ms::text, true);
+  if p_deadline_at <= clock_timestamp() then
+    raise exception 'CREATE_DEADLINE_EXCEEDED';
   end if;
+  deadline_ms := greatest(
+    1::numeric,
+    ceil(extract(epoch from (p_deadline_at - clock_timestamp())) * 1000)
+  )::bigint;
+  perform set_config('lock_timeout', deadline_ms::text, true);
+  perform set_config('statement_timeout', deadline_ms::text, true);
 
   select s.*
     into setup_row
@@ -109,17 +119,15 @@ begin
     raise exception 'SETUP_NOT_AVAILABLE';
   end if;
 
-  if p_deadline_at is not null then
-    if p_deadline_at <= clock_timestamp() then
-      raise exception 'CREATE_DEADLINE_EXCEEDED';
-    end if;
-    deadline_ms := greatest(
-      1::numeric,
-      ceil(extract(epoch from (p_deadline_at - clock_timestamp())) * 1000)
-    )::bigint;
-    perform set_config('lock_timeout', deadline_ms::text, true);
-    perform set_config('statement_timeout', deadline_ms::text, true);
+  if p_deadline_at <= clock_timestamp() then
+    raise exception 'CREATE_DEADLINE_EXCEEDED';
   end if;
+  deadline_ms := greatest(
+    1::numeric,
+    ceil(extract(epoch from (p_deadline_at - clock_timestamp())) * 1000)
+  )::bigint;
+  perform set_config('lock_timeout', deadline_ms::text, true);
+  perform set_config('statement_timeout', deadline_ms::text, true);
 
   if not exists (
     select 1
@@ -139,17 +147,15 @@ begin
     raise exception 'ACTIVE_RADAR_LIMIT_REACHED';
   end if;
 
-  if p_deadline_at is not null then
-    if p_deadline_at <= clock_timestamp() then
-      raise exception 'CREATE_DEADLINE_EXCEEDED';
-    end if;
-    deadline_ms := greatest(
-      1::numeric,
-      ceil(extract(epoch from (p_deadline_at - clock_timestamp())) * 1000)
-    )::bigint;
-    perform set_config('lock_timeout', deadline_ms::text, true);
-    perform set_config('statement_timeout', deadline_ms::text, true);
+  if p_deadline_at <= clock_timestamp() then
+    raise exception 'CREATE_DEADLINE_EXCEEDED';
   end if;
+  deadline_ms := greatest(
+    1::numeric,
+    ceil(extract(epoch from (p_deadline_at - clock_timestamp())) * 1000)
+  )::bigint;
+  perform set_config('lock_timeout', deadline_ms::text, true);
+  perform set_config('statement_timeout', deadline_ms::text, true);
 
   insert into public.radars (
     user_id,
@@ -190,29 +196,6 @@ begin
          updated_at = timezone('utc', now())
    where id = p_setup_id;
 
-  return radar_row;
-end;
-$$;
-
-create or replace function public.create_radar_from_setup(
-  p_setup_id uuid,
-  p_user_id uuid
-)
-returns public.radars
-language plpgsql
-security definer
-set search_path = public, pg_temp
-as $$
-declare
-  radar_row public.radars%rowtype;
-begin
-  select *
-    into radar_row
-    from public.create_radar_from_setup(
-      p_setup_id,
-      p_user_id,
-      null::timestamptz
-    );
   return radar_row;
 end;
 $$;
@@ -547,13 +530,11 @@ end;
 $$;
 
 revoke all on function public.create_radar_from_setup(uuid, uuid, timestamptz) from public, anon, authenticated;
-revoke all on function public.create_radar_from_setup(uuid, uuid) from public, anon, authenticated;
 revoke all on function public.set_radar_status(uuid, uuid, text) from public, anon, authenticated;
 revoke all on function public.claim_radar_run(uuid, uuid, text, uuid, timestamptz) from public, anon, authenticated;
 revoke all on function public.claim_notification(uuid) from public, anon, authenticated;
 
 grant execute on function public.create_radar_from_setup(uuid, uuid, timestamptz) to service_role;
-grant execute on function public.create_radar_from_setup(uuid, uuid) to service_role;
 grant execute on function public.set_radar_status(uuid, uuid, text) to service_role;
 grant execute on function public.claim_radar_run(uuid, uuid, text, uuid, timestamptz) to service_role;
 grant execute on function public.claim_notification(uuid) to service_role;

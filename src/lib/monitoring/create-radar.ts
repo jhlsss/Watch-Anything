@@ -211,17 +211,15 @@ export function throwDatabaseError(
 export async function createRadarFromSetup(
   setupId: string,
   userId: string,
+  deadlineAt: number,
   client?: MonitoringClient,
   signal?: AbortSignal,
-  deadlineAt?: number,
 ): Promise<RadarRecord> {
   const db = getMonitoringClient(client);
   const request = db.rpc("create_radar_from_setup", {
     p_setup_id: setupId,
     p_user_id: userId,
-    ...(deadlineAt === undefined
-      ? {}
-      : { p_deadline_at: new Date(deadlineAt).toISOString() }),
+    p_deadline_at: new Date(deadlineAt).toISOString(),
   });
   const abortableRequest = request as PromiseLike<DatabaseResult> & {
     abortSignal?: (abortSignal: AbortSignal) => PromiseLike<DatabaseResult>;

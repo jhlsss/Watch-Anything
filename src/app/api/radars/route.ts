@@ -110,9 +110,9 @@ export async function POST(request: Request) {
         createRadarFromSetup(
           parsed.data.setupId,
           user.id,
+          outerDeadlineAt,
           db,
           signal,
-          outerDeadlineAt,
         ),
       outerDeadlineAt,
     );

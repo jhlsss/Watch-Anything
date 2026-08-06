@@ -561,7 +561,13 @@ describe("deadline cancellation", () => {
     let creation!: Promise<{ id: string }>;
     const deadlineOutcome = withMonitoringDeadline(
       (signal) => {
-        creation = createRadarFromSetup("setup-1", "user-1", client, signal);
+        creation = createRadarFromSetup(
+          "setup-1",
+          "user-1",
+          Date.now() + 100,
+          client,
+          signal,
+        );
         return creation;
       },
       Date.now() + 100,

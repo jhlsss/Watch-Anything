@@ -329,7 +329,19 @@ describe("monitoring migration contract", () => {
       migration.indexOf("$$;", setupStart),
     );
 
+    expect(migration).toContain(
+      "drop function if exists public.create_radar_from_setup(uuid, uuid)",
+    );
+    expect(migration).toContain(
+      "to_regprocedure('public.create_radar_from_setup(uuid, uuid)')",
+    );
+    expect(migration).not.toContain(
+      "create or replace function public.create_radar_from_setup( p_setup_id uuid, p_user_id uuid ) returns",
+    );
     expect(setupBody).toContain("p_deadline_at timestamptz");
+    expect(setupBody).toContain("if p_deadline_at is null then");
+    expect(setupBody).toContain("raise exception 'create_deadline_required'");
+    expect(setupBody).not.toContain("p_deadline_at is not null");
     expect(setupBody).toContain("set_config('lock_timeout'");
     expect(setupBody).toContain("set_config('statement_timeout'");
 
@@ -353,7 +365,12 @@ describe("monitoring migration contract", () => {
       resolve(process.cwd(), "src/lib/monitoring/create-radar.ts"),
       "utf8",
     );
-    expect(createRadarSource).toContain("p_deadline_at: new Date(deadlineAt)");
+    expect(createRadarSource).toContain("deadlineAt: number");
+    expect(createRadarSource).not.toContain("deadlineAt?: number");
+    expect(createRadarSource).toContain(
+      "p_deadline_at: new Date(deadlineAt).toISOString()",
+    );
+    expect(createRadarSource).not.toContain("deadlineAt === undefined");
     expect(createRadarSource).toContain("abortSignal");
 
     const createRouteSource = readFileSync(
@@ -361,7 +378,7 @@ describe("monitoring migration contract", () => {
       "utf8",
     );
     expect(createRouteSource).toMatch(
-      /createRadarFromSetup\([\s\S]*db,\s*signal,\s*outerDeadlineAt/u,
+      /createRadarFromSetup\([\s\S]*outerDeadlineAt,\s*db,\s*signal/u,
     );
   });
 });
@@ -485,6 +502,7 @@ runIntegrationTest(
           admin.rpc("create_radar_from_setup", {
             p_setup_id: setupId,
             p_user_id: userId,
+            p_deadline_at: new Date(Date.now() + 60_000).toISOString(),
           }),
         ),
       );
