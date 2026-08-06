@@ -81,6 +81,10 @@ async function claimGuestAiRequest(
   admin: ReturnType<typeof createAdminClient>,
   identityHash: string,
 ): Promise<{ allowed: boolean }> {
+  if (process.env.NODE_ENV !== "production") {
+    return { allowed: true };
+  }
+
   const { data, error } = await admin.rpc("claim_guest_ai_request", {
     p_identity_hash: identityHash,
   });

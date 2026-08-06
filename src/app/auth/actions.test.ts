@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 import {
@@ -269,6 +269,7 @@ describe("Auth rule restoration helpers", () => {
 
 describe("parse route quota claim", () => {
   beforeEach(() => {
+    vi.stubEnv("NODE_ENV", "production");
     createAdminClientMock.mockReturnValue({
       rpc: vi.fn().mockResolvedValue({
         data: { allowed: false, identity_count: 3, global_count: 3 },
@@ -295,6 +296,23 @@ describe("parse route quota claim", () => {
     expect(parseRulesMock).not.toHaveBeenCalled();
   });
 
+  it("does not let an exhausted production quota block local rule parsing", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const admin = createAdminClientMock();
+    parseRulesMock.mockResolvedValueOnce(validRules);
+    const request = new NextRequest("http://localhost/api/rules/parse", {
+      method: "POST",
+      body: JSON.stringify({ prompt: "Track official company announcements", locale: "en" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const response = await parseRulesPost(request);
+
+    expect(response.status).toBe(200);
+    expect(admin.rpc).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({ rules: validRules });
+  });
+
   it("releases the guest quota claim when rule parsing fails", async () => {
     const rpc = vi
       .fn()
@@ -318,6 +336,10 @@ describe("parse route quota claim", () => {
     expect(rpc).toHaveBeenNthCalledWith(2, "release_guest_ai_request", {
       p_identity_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 });
 
