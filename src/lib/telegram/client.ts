@@ -35,6 +35,19 @@ export class TelegramApiError extends Error {
   }
 }
 
+function hasErrorName(error: unknown, name: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    (error as { name?: unknown }).name === name
+  );
+}
+
+function isTimeoutOrAbortError(error: unknown): boolean {
+  return hasErrorName(error, "TimeoutError") || hasErrorName(error, "AbortError");
+}
+
 export function createTelegramClient({
   token = parseServerEnv().TELEGRAM_BOT_TOKEN,
   fetchFn = fetch,
@@ -59,9 +72,14 @@ export function createTelegramClient({
       const payload = (await response.json()) as TelegramResult<T>;
 
       if (!response.ok || !payload.ok || payload.result === undefined) {
+        console.error("Telegram API request failed.", {
+          method,
+          status: response.status,
+          description: payload.description,
+        });
         throw new TelegramApiError(
           "TELEGRAM_API_ERROR",
-          payload.description ?? `Telegram ${method} failed.`,
+          "Telegram API request failed.",
         );
       }
 
@@ -71,16 +89,26 @@ export function createTelegramClient({
         throw error;
       }
 
-      if (error instanceof DOMException && error.name === "AbortError") {
+      if (isTimeoutOrAbortError(error)) {
+        console.error("Telegram request timed out.", { method, error });
         throw new TelegramApiError(
           "TELEGRAM_RESULT_UNKNOWN",
           "Telegram request timed out before delivery could be confirmed.",
         );
       }
 
+      console.error("Telegram request failed.", { method, error });
+
+      if (method === "sendMessage") {
+        throw new TelegramApiError(
+          "TELEGRAM_RESULT_UNKNOWN",
+          "Telegram message delivery result is unknown.",
+        );
+      }
+
       throw new TelegramApiError(
         "TELEGRAM_API_ERROR",
-        error instanceof Error ? error.message : "Telegram request failed.",
+        "Telegram API request failed.",
       );
     }
   }

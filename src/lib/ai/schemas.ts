@@ -127,8 +127,8 @@ export function createGroqClient(apiKey?: string): GroqLike {
   return new Groq({ apiKey: resolvedApiKey }) as unknown as GroqLike;
 }
 
-export function resolveGroqModel(model?: string): string {
-  return model ?? parseServerEnv().GROQ_MODEL;
+export function resolveGroqModel(): string {
+  return parseServerEnv().GROQ_MODEL;
 }
 
 function readMessageContent(result: GroqCompletionResult): string {
@@ -161,7 +161,7 @@ function readMessageContent(result: GroqCompletionResult): string {
 
   throw new AiAdapterError(
     "GROQ_INVALID_RESPONSE",
-    "Groq response did not include message content.",
+    "Groq returned an invalid response.",
   );
 }
 
@@ -176,17 +176,16 @@ function parseStructuredContent<T>(
   } catch {
     throw new AiAdapterError(
       "GROQ_INVALID_RESPONSE",
-      "Groq returned invalid JSON.",
+      "Groq returned an invalid response.",
     );
   }
 
   const parsedResult = validator.safeParse(parsedJson);
 
   if (!parsedResult.success) {
-    const issue = parsedResult.error.issues[0];
     throw new AiAdapterError(
       "GROQ_INVALID_RESPONSE",
-      `Groq returned schema-invalid JSON at ${issue?.path.join(".") ?? "root"}.`,
+      "Groq returned an invalid response.",
     );
   }
 
@@ -250,22 +249,36 @@ export async function createStructuredOutput<T>({
     });
   } catch (error) {
     if (!(error instanceof AiAdapterError) || error.code !== "GROQ_INVALID_RESPONSE") {
-      throw error;
+      if (error instanceof AiAdapterError) {
+        throw error;
+      }
+
+      console.error("Groq request failed.", error);
+      throw new AiAdapterError("GROQ_REQUEST_FAILED", "Groq request failed.");
     }
 
-    return runStructuredCompletion({
-      groq,
-      model,
-      schemaName,
-      jsonSchema,
-      messages: [
-        ...messages,
-        {
-          role: "user",
-          content: `Your previous response failed validation: ${error.message} Return valid JSON only.`,
-        },
-      ],
-      validator,
-    });
+    try {
+      return await runStructuredCompletion({
+        groq,
+        model,
+        schemaName,
+        jsonSchema,
+        messages: [
+          ...messages,
+          {
+            role: "user",
+            content: `Your previous response failed validation: ${error.message} Return valid JSON only.`,
+          },
+        ],
+        validator,
+      });
+    } catch (retryError) {
+      if (retryError instanceof AiAdapterError) {
+        throw retryError;
+      }
+
+      console.error("Groq request failed after response repair.", retryError);
+      throw new AiAdapterError("GROQ_REQUEST_FAILED", "Groq request failed.");
+    }
   }
 }

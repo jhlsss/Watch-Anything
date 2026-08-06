@@ -18,8 +18,6 @@ type EvaluateCandidatesInput = {
   rules: RadarRules;
   candidates: Candidate[];
   groq?: GroqLike;
-  model?: string;
-  apiKey?: string;
 };
 
 function trimExcerpt(excerpt: string): string {
@@ -30,8 +28,8 @@ export async function evaluateCandidates({
   rules,
   candidates,
   groq = createGroqClient(),
-  model = resolveGroqModel(),
 }: EvaluateCandidatesInput): Promise<CandidateEvaluation[]> {
+  const model = resolveGroqModel();
   const selectedCandidates = candidates.slice(0, 8);
 
   if (selectedCandidates.length === 0) {

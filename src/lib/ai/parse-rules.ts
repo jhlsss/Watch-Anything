@@ -11,15 +11,13 @@ import {
 type ParseRulesInput = {
   prompt: string;
   groq?: GroqLike;
-  model?: string;
-  apiKey?: string;
 };
 
 export async function parseRules({
   prompt,
   groq = createGroqClient(),
-  model = resolveGroqModel(),
 }: ParseRulesInput): Promise<RadarRules> {
+  const model = resolveGroqModel();
   const parsed = await createStructuredOutput({
     groq,
     model,

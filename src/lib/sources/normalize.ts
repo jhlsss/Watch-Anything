@@ -16,6 +16,16 @@ type RssRecord = {
   pubDate?: string | null;
 };
 
+export class CandidateNormalizationError extends Error {
+  constructor(
+    public readonly code: "CANDIDATE_INVALID_URL" | "CANDIDATE_INVALID_TITLE",
+    message: string,
+  ) {
+    super(message);
+    this.name = "CandidateNormalizationError";
+  }
+}
+
 const TRACKING_PARAMETERS = new Set([
   "fbclid",
   "gclid",
@@ -39,7 +49,23 @@ function firstSentence(value: string): string {
 }
 
 export function normalizeUrl(rawUrl: string): string {
-  const url = new URL(rawUrl);
+  if (typeof rawUrl !== "string" || rawUrl.trim().length === 0) {
+    throw new CandidateNormalizationError(
+      "CANDIDATE_INVALID_URL",
+      "Candidate URL is invalid.",
+    );
+  }
+
+  let url: URL;
+
+  try {
+    url = new URL(rawUrl.trim());
+  } catch {
+    throw new CandidateNormalizationError(
+      "CANDIDATE_INVALID_URL",
+      "Candidate URL is invalid.",
+    );
+  }
 
   url.hash = "";
 
@@ -62,7 +88,22 @@ function truncateExcerpt(value: string): string {
 }
 
 function isTavilyRecord(record: TavilyRecord | RssRecord): record is TavilyRecord {
-  return "url" in record;
+  return (
+    typeof record === "object" &&
+    record !== null &&
+    "url" in record
+  );
+}
+
+function normalizeTitle(rawTitle: unknown): string {
+  if (typeof rawTitle !== "string" || rawTitle.trim().length === 0) {
+    throw new CandidateNormalizationError(
+      "CANDIDATE_INVALID_TITLE",
+      "Candidate title is invalid.",
+    );
+  }
+
+  return rawTitle.trim();
 }
 
 export function normalizeCandidate(record: TavilyRecord | RssRecord): Candidate {
@@ -73,7 +114,7 @@ export function normalizeCandidate(record: TavilyRecord | RssRecord): Candidate 
       sourceType: "tavily",
       sourceDomain: new URL(sourceUrl).hostname,
       sourceUrl,
-      title: record.title,
+      title: normalizeTitle(record.title),
       excerpt: truncateExcerpt(record.content?.trim() ?? ""),
       publishedAt: record.published_date ?? null,
     };
@@ -86,7 +127,7 @@ export function normalizeCandidate(record: TavilyRecord | RssRecord): Candidate 
     sourceType: "rss",
     sourceDomain: new URL(sourceUrl).hostname,
     sourceUrl,
-    title: record.title?.trim() ?? "",
+    title: normalizeTitle(record.title),
     excerpt: truncateExcerpt(firstSentence(excerptSource)),
     publishedAt: record.isoDate ?? record.pubDate ?? null,
   };
