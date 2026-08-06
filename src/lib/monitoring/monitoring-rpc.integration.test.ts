@@ -97,6 +97,12 @@ describe("monitoring migration contract", () => {
     expect(claimFunctionBody).toMatch(
       /if claimed_radar_id is null then[\s\S]*if p_lease_expires_at <= clock_timestamp\(\) then[\s\S]*'invalid_run_lease'/u,
     );
+    expect(claimFunctionBody).toMatch(
+      /update public\.notifications n .*set status = 'unknown'.*n\.radar_id = p_radar_id.*n\.status = 'sending'.*claimed_at/u,
+    );
+    expect(claimFunctionBody).toContain(
+      "get diagnostics stale_notification_count = row_count",
+    );
     for (const functionName of [
       "persist_run_source_outcomes",
       "finalize_run_for_owner",
@@ -302,6 +308,61 @@ describe("monitoring migration contract", () => {
       "n.claimed_at <= clock_timestamp() - interval '5 minutes'",
     );
     expect(functionBody).toContain("returning * into notification_row");
+  });
+
+  it("passes an absolute create deadline into the RPC and enforces it around locks and insert", () => {
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "supabase/migrations/202608060002_monitoring_functions.sql",
+      ),
+      "utf8",
+    )
+      .replace(/--.*$/gm, "")
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+    const setupStart = migration.indexOf(
+      "create or replace function public.create_radar_from_setup",
+    );
+    const setupBody = migration.slice(
+      setupStart,
+      migration.indexOf("$$;", setupStart),
+    );
+
+    expect(setupBody).toContain("p_deadline_at timestamptz");
+    expect(setupBody).toContain("set_config('lock_timeout'");
+    expect(setupBody).toContain("set_config('statement_timeout'");
+
+    const lockPositions = [...setupBody.matchAll(/for update/g)].map(
+      (match) => match.index ?? -1,
+    );
+    const insertPosition = setupBody.indexOf("insert into public.radars");
+    expect(lockPositions.length).toBeGreaterThanOrEqual(2);
+    expect(insertPosition).toBeGreaterThan(lockPositions[1] ?? -1);
+    expect(
+      setupBody.slice(lockPositions[0], lockPositions[1]),
+    ).toContain("p_deadline_at <= clock_timestamp()");
+    expect(
+      setupBody.slice(lockPositions[1], insertPosition),
+    ).toContain("p_deadline_at <= clock_timestamp()");
+    expect(setupBody.slice(0, insertPosition)).toContain(
+      "p_deadline_at <= clock_timestamp()",
+    );
+
+    const createRadarSource = readFileSync(
+      resolve(process.cwd(), "src/lib/monitoring/create-radar.ts"),
+      "utf8",
+    );
+    expect(createRadarSource).toContain("p_deadline_at: new Date(deadlineAt)");
+    expect(createRadarSource).toContain("abortSignal");
+
+    const createRouteSource = readFileSync(
+      resolve(process.cwd(), "src/app/api/radars/route.ts"),
+      "utf8",
+    );
+    expect(createRouteSource).toMatch(
+      /createRadarFromSetup\([\s\S]*db,\s*signal,\s*outerDeadlineAt/u,
+    );
   });
 });
 

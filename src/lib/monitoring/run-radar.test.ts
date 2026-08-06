@@ -807,6 +807,12 @@ class MonitoringFakeClient implements MonitoringClient {
   ): Promise<DatabaseResult> {
     this.rpcCalls.push(functionName);
     if (functionName === "claim_radar_run") {
+      if (
+        this.existingNotificationStatus === "sending" &&
+        this.existingNotificationExpiredSending
+      ) {
+        this.existingNotificationStatus = "unknown";
+      }
       return Promise.resolve({
         data: [{ run_id: "run-1", lease_owner: "claim-owner", error_code: null }],
         error: null,
@@ -1498,6 +1504,49 @@ describe("run pipeline", () => {
     client.existingNotificationExpiredSending = true;
     const sendNotification = vi.fn();
 
+    await runRadar("radar-1", "baseline", {
+      client,
+      searchTavily: async () => [testCandidate],
+      fetchRss: async () => [],
+      evaluate: async () => [
+        {
+          candidate: testCandidate,
+          evaluation: {
+            relevant: true,
+            relevance_score: 90,
+            importance_score: 90,
+            confidence: 0.9,
+            event_key: "expired-sending-event",
+            duplicate_of_event_key: null,
+            reason: "matches",
+          },
+        },
+      ],
+      sendNotification,
+    });
+
+    expect(client.existingNotificationStatus).toBe("unknown");
+    expect(sendNotification).not.toHaveBeenCalled();
+  });
+
+  it("cleans stale sending during a zero-candidate run and never reopens it", async () => {
+    const client = new MonitoringFakeClient();
+    client.existingNotificationStatus = "sending";
+    client.existingNotificationExpiredSending = true;
+    const sendNotification = vi.fn();
+
+    await runRadar("radar-1", "baseline", {
+      client,
+      searchTavily: async () => [],
+      fetchRss: async () => [],
+      sendNotification,
+    });
+
+    expect(client.existingNotificationStatus).toBe("unknown");
+    expect(sendNotification).not.toHaveBeenCalled();
+
+    client.runStatus = "running";
+    client.tavilyBaselineCompletedAt = "2026-08-05T00:00:00.000Z";
     await runRadar("radar-1", "baseline", {
       client,
       searchTavily: async () => [testCandidate],

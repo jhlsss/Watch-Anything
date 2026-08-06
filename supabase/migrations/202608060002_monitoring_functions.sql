@@ -49,7 +49,8 @@ grant all on public.run_findings to service_role;
 
 create or replace function public.create_radar_from_setup(
   p_setup_id uuid,
-  p_user_id uuid
+  p_user_id uuid,
+  p_deadline_at timestamptz
 )
 returns public.radars
 language plpgsql
@@ -61,7 +62,20 @@ declare
   radar_row public.radars%rowtype;
   profile_id uuid;
   active_count integer;
+  deadline_ms bigint;
 begin
+  if p_deadline_at is not null then
+    if p_deadline_at <= clock_timestamp() then
+      raise exception 'CREATE_DEADLINE_EXCEEDED';
+    end if;
+    deadline_ms := greatest(
+      1::numeric,
+      ceil(extract(epoch from (p_deadline_at - clock_timestamp())) * 1000)
+    )::bigint;
+    perform set_config('lock_timeout', deadline_ms::text, true);
+    perform set_config('statement_timeout', deadline_ms::text, true);
+  end if;
+
   select p.id
     into profile_id
     from public.profiles p
@@ -70,6 +84,18 @@ begin
 
   if profile_id is null then
     raise exception 'PROFILE_NOT_FOUND';
+  end if;
+
+  if p_deadline_at is not null then
+    if p_deadline_at <= clock_timestamp() then
+      raise exception 'CREATE_DEADLINE_EXCEEDED';
+    end if;
+    deadline_ms := greatest(
+      1::numeric,
+      ceil(extract(epoch from (p_deadline_at - clock_timestamp())) * 1000)
+    )::bigint;
+    perform set_config('lock_timeout', deadline_ms::text, true);
+    perform set_config('statement_timeout', deadline_ms::text, true);
   end if;
 
   select s.*
@@ -81,6 +107,18 @@ begin
 
   if not found or setup_row.status <> 'pending' or setup_row.expires_at <= clock_timestamp() then
     raise exception 'SETUP_NOT_AVAILABLE';
+  end if;
+
+  if p_deadline_at is not null then
+    if p_deadline_at <= clock_timestamp() then
+      raise exception 'CREATE_DEADLINE_EXCEEDED';
+    end if;
+    deadline_ms := greatest(
+      1::numeric,
+      ceil(extract(epoch from (p_deadline_at - clock_timestamp())) * 1000)
+    )::bigint;
+    perform set_config('lock_timeout', deadline_ms::text, true);
+    perform set_config('statement_timeout', deadline_ms::text, true);
   end if;
 
   if not exists (
@@ -99,6 +137,18 @@ begin
 
   if active_count >= 3 then
     raise exception 'ACTIVE_RADAR_LIMIT_REACHED';
+  end if;
+
+  if p_deadline_at is not null then
+    if p_deadline_at <= clock_timestamp() then
+      raise exception 'CREATE_DEADLINE_EXCEEDED';
+    end if;
+    deadline_ms := greatest(
+      1::numeric,
+      ceil(extract(epoch from (p_deadline_at - clock_timestamp())) * 1000)
+    )::bigint;
+    perform set_config('lock_timeout', deadline_ms::text, true);
+    perform set_config('statement_timeout', deadline_ms::text, true);
   end if;
 
   insert into public.radars (
@@ -140,6 +190,29 @@ begin
          updated_at = timezone('utc', now())
    where id = p_setup_id;
 
+  return radar_row;
+end;
+$$;
+
+create or replace function public.create_radar_from_setup(
+  p_setup_id uuid,
+  p_user_id uuid
+)
+returns public.radars
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  radar_row public.radars%rowtype;
+begin
+  select *
+    into radar_row
+    from public.create_radar_from_setup(
+      p_setup_id,
+      p_user_id,
+      null::timestamptz
+    );
   return radar_row;
 end;
 $$;
@@ -241,6 +314,7 @@ declare
   recovered_run_id uuid;
   recovered_status text;
   manual_count integer;
+  stale_notification_count integer;
 begin
   if p_trigger not in ('baseline', 'manual', 'schedule') then
     return query select null::uuid, null::uuid, 'INVALID_RUN_TRIGGER';
@@ -422,6 +496,17 @@ begin
   )
   returning id into claimed_run_id;
 
+  update public.notifications n
+     set status = 'unknown',
+         error_code = 'NOTIFICATION_CLAIM_EXPIRED'
+   where n.radar_id = p_radar_id
+     and n.status = 'sending'
+     and (
+       n.claimed_at is null
+       or n.claimed_at <= clock_timestamp() - interval '5 minutes'
+     );
+  get diagnostics stale_notification_count = row_count;
+
   return query select claimed_run_id, p_lease_owner, null::text;
 end;
 $$;
@@ -461,11 +546,13 @@ begin
 end;
 $$;
 
+revoke all on function public.create_radar_from_setup(uuid, uuid, timestamptz) from public, anon, authenticated;
 revoke all on function public.create_radar_from_setup(uuid, uuid) from public, anon, authenticated;
 revoke all on function public.set_radar_status(uuid, uuid, text) from public, anon, authenticated;
 revoke all on function public.claim_radar_run(uuid, uuid, text, uuid, timestamptz) from public, anon, authenticated;
 revoke all on function public.claim_notification(uuid) from public, anon, authenticated;
 
+grant execute on function public.create_radar_from_setup(uuid, uuid, timestamptz) to service_role;
 grant execute on function public.create_radar_from_setup(uuid, uuid) to service_role;
 grant execute on function public.set_radar_status(uuid, uuid, text) to service_role;
 grant execute on function public.claim_radar_run(uuid, uuid, text, uuid, timestamptz) to service_role;

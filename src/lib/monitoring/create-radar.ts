@@ -2,6 +2,7 @@ import { createClient as createAdminClient } from "@/lib/supabase/admin";
 import type { RunResult } from "@/types/contracts";
 
 export type MonitoringErrorCode =
+  | "CREATE_DEADLINE_EXCEEDED"
   | "PROFILE_NOT_FOUND"
   | "SETUP_NOT_AVAILABLE"
   | "TELEGRAM_NOT_CONNECTED"
@@ -212,11 +213,15 @@ export async function createRadarFromSetup(
   userId: string,
   client?: MonitoringClient,
   signal?: AbortSignal,
+  deadlineAt?: number,
 ): Promise<RadarRecord> {
   const db = getMonitoringClient(client);
   const request = db.rpc("create_radar_from_setup", {
     p_setup_id: setupId,
     p_user_id: userId,
+    ...(deadlineAt === undefined
+      ? {}
+      : { p_deadline_at: new Date(deadlineAt).toISOString() }),
   });
   const abortableRequest = request as PromiseLike<DatabaseResult> & {
     abortSignal?: (abortSignal: AbortSignal) => PromiseLike<DatabaseResult>;
@@ -229,7 +234,7 @@ export async function createRadarFromSetup(
 
   if (result.error) {
     const code = result.error.message.match(
-      /PROFILE_NOT_FOUND|SETUP_NOT_AVAILABLE|TELEGRAM_NOT_CONNECTED|ACTIVE_RADAR_LIMIT_REACHED/u,
+      /CREATE_DEADLINE_EXCEEDED|PROFILE_NOT_FOUND|SETUP_NOT_AVAILABLE|TELEGRAM_NOT_CONNECTED|ACTIVE_RADAR_LIMIT_REACHED/u,
     )?.[0];
     throw new MonitoringError(code ?? "DATABASE_ERROR", result.error.message);
   }
