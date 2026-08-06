@@ -211,12 +211,21 @@ export async function createRadarFromSetup(
   setupId: string,
   userId: string,
   client?: MonitoringClient,
+  signal?: AbortSignal,
 ): Promise<RadarRecord> {
   const db = getMonitoringClient(client);
-  const result = await db.rpc("create_radar_from_setup", {
+  const request = db.rpc("create_radar_from_setup", {
     p_setup_id: setupId,
     p_user_id: userId,
   });
+  const abortableRequest = request as PromiseLike<DatabaseResult> & {
+    abortSignal?: (abortSignal: AbortSignal) => PromiseLike<DatabaseResult>;
+  };
+  const observedRequest =
+    signal && typeof abortableRequest.abortSignal === "function"
+      ? abortableRequest.abortSignal(signal)
+      : request;
+  const result = await observedRequest;
 
   if (result.error) {
     const code = result.error.message.match(

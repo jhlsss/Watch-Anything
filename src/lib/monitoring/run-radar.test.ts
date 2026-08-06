@@ -15,6 +15,7 @@ import type {
   MonitoringClient,
   MonitoringQuery,
 } from "@/lib/monitoring/create-radar";
+import { createRadarFromSetup } from "@/lib/monitoring/create-radar";
 import {
   executeClaimedRun,
   runRadar,
@@ -526,6 +527,82 @@ describe("notification claiming", () => {
   );
 });
 
+describe("deadline cancellation", () => {
+  it("cancels the original create RPC before a locked setup can commit", async () => {
+    vi.useFakeTimers();
+    let abortCount = 0;
+    let aborted = false;
+    let radarCount = 0;
+    let setupStatus: "pending" | "consumed" = "pending";
+    let releaseRpc!: (result: DatabaseResult) => void;
+    const rpcResult = new Promise<DatabaseResult>((resolve) => {
+      releaseRpc = resolve;
+    });
+    const request = {
+      abortSignal(signal: AbortSignal) {
+        signal.addEventListener("abort", () => {
+          abortCount += 1;
+          aborted = true;
+        });
+        return request;
+      },
+      then(
+        onFulfilled?: (value: DatabaseResult) => unknown,
+        onRejected?: (reason: unknown) => unknown,
+      ) {
+        return rpcResult.then(onFulfilled, onRejected);
+      },
+    };
+    const client = {
+      from: vi.fn(),
+      rpc: vi.fn(() => request),
+    } as unknown as MonitoringClient;
+
+    let creation!: Promise<{ id: string }>;
+    const deadlineOutcome = withMonitoringDeadline(
+      (signal) => {
+        creation = createRadarFromSetup("setup-1", "user-1", client, signal);
+        return creation;
+      },
+      Date.now() + 100,
+    ).then(
+      () => ({ kind: "resolved" as const }),
+      (error: unknown) => ({ kind: "rejected" as const, error }),
+    );
+    const creationOutcome = creation.then(
+      () => ({ kind: "resolved" as const }),
+      () => ({ kind: "rejected" as const }),
+    );
+
+    try {
+      await vi.advanceTimersByTimeAsync(100);
+      await expect(deadlineOutcome).resolves.toMatchObject({
+        kind: "rejected",
+        error: { code: "RUN_DEADLINE_EXCEEDED" },
+      });
+
+      releaseRpc({
+        data: aborted
+          ? null
+          : (() => {
+              radarCount += 1;
+              setupStatus = "consumed";
+              return [{ id: "radar-1" }];
+            })(),
+        error: aborted ? { message: "request aborted" } : null,
+      });
+      await expect(creationOutcome).resolves.toMatchObject({
+        kind: aborted ? "rejected" : "resolved",
+      });
+      expect(abortCount).toBe(1);
+      expect(radarCount).toBe(0);
+      expect(setupStatus).toBe("pending");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 const testRules: RadarRules = {
   radarName: "Task 5 Radar",
   subject: "Task 5",
@@ -573,10 +650,14 @@ class MonitoringFakeClient implements MonitoringClient {
   radarUpdateRows = true;
   terminalUpdateFailures = 0;
   terminalUpdateDelayMs = 0;
+  recoveryRequestPending = false;
+  recoveryRequestAbortCount = 0;
   sourcePersistenceFailures = 0;
   persistFindingRpcError: string | null = null;
   tavilyBaselineCompletedAt: string | null = null;
   runLeaseExpiresAt = "2099-08-06T00:00:00.000Z";
+  existingNotificationStatus: "pending" | "sending" | "unknown" = "pending";
+  existingNotificationExpiredSending = false;
   private findingCounter = 0;
 
   from(table: string): MonitoringQuery {
@@ -777,6 +858,26 @@ class MonitoringFakeClient implements MonitoringClient {
       return Promise.resolve(finalize());
     }
     if (functionName === "recover_run_for_owner") {
+      if (this.recoveryRequestPending) {
+        let resolveRequest!: (result: DatabaseResult) => void;
+        const pendingRequest = new Promise<DatabaseResult>((resolve) => {
+          resolveRequest = resolve;
+        });
+        const request = {
+          abortSignal: (signal: AbortSignal) => {
+            signal.addEventListener("abort", () => {
+              this.recoveryRequestAbortCount += 1;
+              resolveRequest({ data: [], error: null });
+            });
+            return request;
+          },
+          then: (
+            onFulfilled?: (value: DatabaseResult) => unknown,
+            onRejected?: (reason: unknown) => unknown,
+          ) => pendingRequest.then(onFulfilled, onRejected),
+        };
+        return request as unknown as Promise<DatabaseResult>;
+      }
       const recover = () => {
         const update = {
           status: "failed",
@@ -835,6 +936,27 @@ class MonitoringFakeClient implements MonitoringClient {
     if (functionName === "mark_source_baseline_for_run") {
       return Promise.resolve({
         data: this.radarUpdateRows ? [true] : [],
+        error: null,
+      });
+    }
+    if (functionName === "create_pending_notification_for_run") {
+      if (
+        this.existingNotificationStatus === "sending" &&
+        this.existingNotificationExpiredSending
+      ) {
+        this.existingNotificationStatus = "unknown";
+      }
+      return Promise.resolve({
+        data: [
+          {
+            notification_id: "notification-1",
+            finding_id: "finding-rpc-1",
+            radar_id: "radar-1",
+            user_id: "user-1",
+            destination_id: "chat-1",
+            status: this.existingNotificationStatus,
+          },
+        ],
         error: null,
       });
     }
@@ -1369,6 +1491,38 @@ describe("run pipeline", () => {
     });
   });
 
+  it("does not send an expired sending notification through the full run path", async () => {
+    const client = new MonitoringFakeClient();
+    client.tavilyBaselineCompletedAt = "2026-08-05T00:00:00.000Z";
+    client.existingNotificationStatus = "sending";
+    client.existingNotificationExpiredSending = true;
+    const sendNotification = vi.fn();
+
+    await runRadar("radar-1", "baseline", {
+      client,
+      searchTavily: async () => [testCandidate],
+      fetchRss: async () => [],
+      evaluate: async () => [
+        {
+          candidate: testCandidate,
+          evaluation: {
+            relevant: true,
+            relevance_score: 90,
+            importance_score: 90,
+            confidence: 0.9,
+            event_key: "expired-sending-event",
+            duplicate_of_event_key: null,
+            reason: "matches",
+          },
+        },
+      ],
+      sendNotification,
+    });
+
+    expect(client.existingNotificationStatus).toBe("unknown");
+    expect(sendNotification).not.toHaveBeenCalled();
+  });
+
   it("stops waiting for source work at the claimed lease deadline", async () => {
     const client = new MonitoringFakeClient();
     client.runLeaseExpiresAt = new Date(Date.now() + 20).toISOString();
@@ -1436,6 +1590,33 @@ describe("run pipeline", () => {
     ).rejects.toMatchObject({ code: "RUN_DEADLINE_EXCEEDED" });
 
     expect(Date.now() - startedAt).toBeLessThan(500);
+  });
+
+  it("does not recover an expired lease after a recovery lock wait", async () => {
+    const client = new MonitoringFakeClient();
+    client.runLeaseExpiresAt = new Date(Date.now() + 100).toISOString();
+    client.recoveryRequestPending = true;
+
+    await expect(
+      executeClaimedRun("run-1", "claim-owner", {
+        client,
+        searchTavily: async () => [],
+        fetchRss: async () => [],
+      }),
+    ).rejects.toMatchObject({ code: "RUN_DEADLINE_EXCEEDED" });
+
+    expect(client.recoveryRequestAbortCount).toBe(1);
+    expect(client.terminalRunUpdates).toHaveLength(0);
+
+    client.recoveryRequestPending = false;
+    client.runLeaseExpiresAt = "2099-08-06T00:00:00.000Z";
+    await expect(
+      runRadar("radar-1", "baseline", {
+        client,
+        searchTavily: async () => [],
+        fetchRss: async () => [],
+      }),
+    ).resolves.toMatchObject({ status: "success" });
   });
 
   it("recomputes recovery cleanup budget when a late infrastructure failure occurs", async () => {

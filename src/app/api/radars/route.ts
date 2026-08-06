@@ -106,7 +106,8 @@ export async function POST(request: Request) {
   let createdRadar: Awaited<ReturnType<typeof createRadarFromSetup>> | null = null;
   try {
     createdRadar = await withMonitoringDeadline(
-      createRadarFromSetup(parsed.data.setupId, user.id, db),
+      (signal) =>
+        createRadarFromSetup(parsed.data.setupId, user.id, db, signal),
       outerDeadlineAt,
     );
     const cookieStore = await cookies();

@@ -79,7 +79,7 @@ begin
      and s.user_id = p_user_id
    for update;
 
-  if not found or setup_row.status <> 'pending' or setup_row.expires_at <= now() then
+  if not found or setup_row.status <> 'pending' or setup_row.expires_at <= clock_timestamp() then
     raise exception 'SETUP_NOT_AVAILABLE';
   end if;
 
@@ -448,13 +448,13 @@ begin
      and n.status = 'sending'
      and (
        n.claimed_at is null
-       or n.claimed_at <= timezone('utc', now()) - interval '5 minutes'
+       or n.claimed_at <= clock_timestamp() - interval '5 minutes'
      );
 
   return query
   update public.notifications n
      set status = 'sending',
-         claimed_at = timezone('utc', now())
+         claimed_at = timezone('utc', clock_timestamp())
    where n.id = p_notification_id
      and n.status = 'pending'
   returning n.id, n.finding_id, n.radar_id, n.user_id, n.destination_id;
@@ -893,6 +893,40 @@ begin
     raise exception 'NOTIFICATION_NOT_FOUND';
   end if;
 
+  if notification_row.status = 'sending'
+     and (
+       notification_row.claimed_at is null
+       or notification_row.claimed_at <= clock_timestamp() - interval '5 minutes'
+     ) then
+    update public.radar_runs
+       set lease_expires_at = lease_expires_at
+     where id = p_run_id
+       and radar_id = radar_id_for_run
+       and status = 'running'
+       and lease_owner = p_lease_owner
+       and lease_expires_at > clock_timestamp()
+    returning id into lease_cas_id;
+
+    if lease_cas_id is null then
+      raise exception 'RUN_NOT_CLAIMED';
+    end if;
+
+    update public.notifications n
+       set status = 'unknown',
+           error_code = 'NOTIFICATION_CLAIM_EXPIRED'
+     where n.id = notification_row.id
+       and n.status = 'sending'
+       and (
+         n.claimed_at is null
+         or n.claimed_at <= clock_timestamp() - interval '5 minutes'
+       )
+    returning * into notification_row;
+
+    if not found then
+      raise exception 'NOTIFICATION_NOT_FOUND';
+    end if;
+  end if;
+
   return query
   select notification_row.id,
          notification_row.finding_id,
@@ -1257,6 +1291,7 @@ begin
      and rr.radar_id = radar_id_for_run
      and rr.status = 'running'
      and rr.lease_owner = p_lease_owner
+     and rr.lease_expires_at > clock_timestamp()
    for update;
 
   if run_lock_id is null then
@@ -1300,6 +1335,7 @@ begin
      and radar_id = radar_id_for_run
      and status = 'running'
      and lease_owner = p_lease_owner
+     and lease_expires_at > clock_timestamp()
   returning id into run_lock_id;
 
   if run_lock_id is null then
@@ -1317,6 +1353,7 @@ begin
          updated_at = timezone('utc', clock_timestamp())
    where id = radar_lock_id
      and lease_owner = p_lease_owner
+     and lease_expires_at > clock_timestamp()
   returning id into radar_lock_id;
 
   if radar_lock_id is null then

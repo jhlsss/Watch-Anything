@@ -230,6 +230,79 @@ describe("monitoring migration contract", () => {
     expect(manualRunRoute).toContain("MONITORING_ROUTE_BUDGET_MS");
     expect(manualRunRoute).toContain("outerDeadlineAt");
   });
+
+  it("rechecks setup and recovery leases with wall-clock time after locks", () => {
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "supabase/migrations/202608060002_monitoring_functions.sql",
+      ),
+      "utf8",
+    )
+      .replace(/--.*$/gm, "")
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+
+    const setupStart = migration.indexOf(
+      "create or replace function public.create_radar_from_setup",
+    );
+    const setupBody = migration.slice(
+      setupStart,
+      migration.indexOf("$$;", setupStart),
+    );
+    expect(setupBody).toMatch(
+      /select s\.\* .*for update; if not found or setup_row\.status <> 'pending' or setup_row\.expires_at <= clock_timestamp\(\)/u,
+    );
+    expect(setupBody).not.toContain("setup_row.expires_at <= now()");
+
+    const recoveryStart = migration.indexOf(
+      "create or replace function public.recover_run_for_owner",
+    );
+    const recoveryBody = migration.slice(
+      recoveryStart,
+      migration.indexOf("$$;", recoveryStart),
+    );
+    expect(recoveryBody).toMatch(
+      /select rr\.id, rr\.source_outcomes, rr\.source_success_count .*status = 'running' .*lease_owner = p_lease_owner .*rr\.lease_expires_at > clock_timestamp\(\) .*for update/u,
+    );
+    expect(recoveryBody).toMatch(
+      /update public\.radar_runs .*where id = p_run_id .*status = 'running' .*lease_owner = p_lease_owner .*lease_expires_at > clock_timestamp\(\) .*returning id into run_lock_id/u,
+    );
+    expect(recoveryBody).toMatch(
+      /update public\.radars .*where id = radar_lock_id .*lease_owner = p_lease_owner .*lease_expires_at > clock_timestamp\(\) .*returning id into radar_lock_id/u,
+    );
+  });
+
+  it("cleans an expired sending notification before returning an existing row", () => {
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "supabase/migrations/202608060002_monitoring_functions.sql",
+      ),
+      "utf8",
+    )
+      .replace(/--.*$/gm, "")
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+    const functionStart = migration.indexOf(
+      "create or replace function public.create_pending_notification_for_run",
+    );
+    const functionBody = migration.slice(
+      functionStart,
+      migration.indexOf("$$;", functionStart),
+    );
+
+    expect(functionBody).toContain("if notification_row.status = 'sending'");
+    expect(functionBody).toContain(
+      "update public.notifications n set status = 'unknown'",
+    );
+    expect(functionBody).toContain("n.id = notification_row.id");
+    expect(functionBody).toContain("n.status = 'sending'");
+    expect(functionBody).toContain(
+      "n.claimed_at <= clock_timestamp() - interval '5 minutes'",
+    );
+    expect(functionBody).toContain("returning * into notification_row");
+  });
 });
 
 const integrationConfig = {

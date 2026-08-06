@@ -143,12 +143,18 @@ function assertRunDeadline(deadlineAt: number): void {
   }
 }
 
+type DeadlineOperation<T> =
+  | PromiseLike<T>
+  | ((signal: AbortSignal) => PromiseLike<T>);
+
 function withRunDeadline<T>(
-  promise: PromiseLike<T>,
+  operation: DeadlineOperation<T>,
   deadlineAt: number,
   timeoutError = runDeadlineError(),
 ): Promise<T> {
   const controller = new AbortController();
+  const promise =
+    typeof operation === "function" ? operation(controller.signal) : operation;
   const abortablePromise = promise as PromiseLike<T> & {
     abortSignal?: (signal: AbortSignal) => PromiseLike<T>;
   };
@@ -159,6 +165,7 @@ function withRunDeadline<T>(
   const remainingMs = deadlineAt - Date.now();
   if (remainingMs <= 0) {
     controller.abort();
+    void Promise.resolve(observedRequest).catch(() => undefined);
     return Promise.reject(timeoutError);
   }
 
@@ -184,10 +191,10 @@ function withRunDeadline<T>(
 }
 
 export function withMonitoringDeadline<T>(
-  promise: PromiseLike<T>,
+  operation: DeadlineOperation<T>,
   deadlineAt: number,
 ): Promise<T> {
-  return withRunDeadline(promise, deadlineAt);
+  return withRunDeadline(operation, deadlineAt);
 }
 
 function withAiTimeout<T>(
@@ -412,8 +419,9 @@ function isRunDeadlineExceeded(error: unknown): boolean {
 }
 
 async function retryTerminalWrite<T>(
-  operation: () => Promise<T>,
+  operation: DeadlineOperation<T>,
   deadlineAt?: number,
+  validate?: (result: T) => void,
 ): Promise<T> {
   let lastError: unknown;
 
@@ -421,10 +429,16 @@ async function retryTerminalWrite<T>(
     try {
       if (deadlineAt !== undefined) {
         assertRunDeadline(deadlineAt);
-        return await withRunDeadline(operation(), deadlineAt);
+        const result = await withRunDeadline(operation, deadlineAt);
+        validate?.(result);
+        return result;
       }
 
-      return await operation();
+      const result = await (typeof operation === "function"
+        ? operation(new AbortController().signal)
+        : operation);
+      validate?.(result);
+      return result;
     } catch (error) {
       if (isRunNotClaimed(error) || isRunDeadlineExceeded(error)) {
         throw error;
@@ -754,22 +768,26 @@ async function finalizeRun(
   },
   deadlineAt: number,
 ): Promise<RunResult> {
-  await retryTerminalWrite(async () => {
-    const resultRow = await client.rpc("finalize_run_for_owner", {
-      p_run_id: run.id,
-      p_lease_owner: leaseOwner,
-      p_status: result.status,
-      p_candidate_count: result.candidateCount,
-      p_relevant_count: result.relevantCount,
-      p_notification_count: result.notificationCount,
-      p_source_outcomes: result.sourceOutcomes,
-      p_internal_errors: result.internalErrors,
-    });
-    throwRunRpcError(resultRow.error);
-    if (!rpcReturnedTrue(resultRow.data)) {
-      throw new MonitoringError("RUN_NOT_CLAIMED", "Run is no longer claimed.");
-    }
-  }, deadlineAt);
+  await retryTerminalWrite(
+    () =>
+      client.rpc("finalize_run_for_owner", {
+        p_run_id: run.id,
+        p_lease_owner: leaseOwner,
+        p_status: result.status,
+        p_candidate_count: result.candidateCount,
+        p_relevant_count: result.relevantCount,
+        p_notification_count: result.notificationCount,
+        p_source_outcomes: result.sourceOutcomes,
+        p_internal_errors: result.internalErrors,
+      }),
+    deadlineAt,
+    (resultRow) => {
+      throwRunRpcError(resultRow.error);
+      if (!rpcReturnedTrue(resultRow.data)) {
+        throw new MonitoringError("RUN_NOT_CLAIMED", "Run is no longer claimed.");
+      }
+    },
+  );
 
   return {
     runId: run.id,
@@ -787,17 +805,21 @@ async function recoverClaimedRun(
   cause: unknown,
   cleanupDeadlineAt = Date.now() + RECOVERY_CLEANUP_BUDGET_MS,
 ): Promise<void> {
-  await retryTerminalWrite(async () => {
-    const result = await client.rpc("recover_run_for_owner", {
-      p_run_id: run.id,
-      p_lease_owner: leaseOwner,
-      p_error_code: errorCode(cause, "RUN_RECOVERY_FAILED"),
-    });
-    throwRunRpcError(result.error);
-    if (!rpcReturnedTrue(result.data)) {
-      throw new MonitoringError("RUN_NOT_CLAIMED", "Run is no longer claimed.");
-    }
-  }, cleanupDeadlineAt);
+  await retryTerminalWrite(
+    () =>
+      client.rpc("recover_run_for_owner", {
+        p_run_id: run.id,
+        p_lease_owner: leaseOwner,
+        p_error_code: errorCode(cause, "RUN_RECOVERY_FAILED"),
+      }),
+    cleanupDeadlineAt,
+    (resultRow) => {
+      throwRunRpcError(resultRow.error);
+      if (!rpcReturnedTrue(resultRow.data)) {
+        throw new MonitoringError("RUN_NOT_CLAIMED", "Run is no longer claimed.");
+      }
+    },
+  );
 }
 
 export async function runRadar(
