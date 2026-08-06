@@ -1,0 +1,67 @@
+"use client";
+
+import { useState } from "react";
+import { Send } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import type { Locale } from "@/lib/i18n";
+import { getMessages } from "@/lib/i18n";
+
+interface ConnectCardProps {
+  locale: Locale;
+  onConnectTelegram: (payload: { username: string }) => void;
+}
+
+export function ConnectCard({ locale, onConnectTelegram }: ConnectCardProps) {
+  const copy = getMessages(locale).telegram;
+  const [connected, setConnected] = useState(false);
+
+  return (
+    <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="space-y-2">
+        <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-violet-600">{copy.eyebrow}</p>
+        <h1 className="text-3xl font-semibold tracking-tight text-slate-950">{copy.title}</h1>
+        <p className="text-sm leading-6 text-slate-600">{copy.description}</p>
+      </div>
+
+      <div className="mt-6 flex items-center gap-4 rounded-3xl border border-violet-100 bg-violet-50 p-4">
+        <div className="grid h-12 w-12 place-items-center rounded-full bg-violet-600 text-white">
+          <Send className="h-5 w-5" />
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-slate-950">{copy.botLabel}</p>
+          <p className="text-sm text-slate-600">@watchanything_bot · {copy.botHint}</p>
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-3">
+        {copy.steps.map((step, index) => (
+          <div key={step} className="flex gap-3 rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
+            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-violet-100 text-xs font-bold text-violet-700">
+              {index + 1}
+            </span>
+            <p>{step}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-6 flex flex-col gap-3 min-[850px]:flex-row">
+        <Button
+          className="h-11 rounded-2xl bg-violet-600 text-white hover:bg-violet-500"
+          onClick={() => {
+            onConnectTelegram({ username: "@watchanything_bot" });
+            setConnected(true);
+          }}
+        >
+          {copy.connect}
+        </Button>
+        <Button type="button" variant="outline" className="h-11 rounded-2xl">
+          {copy.skip}
+        </Button>
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+        {connected ? copy.connected : copy.waiting}
+      </div>
+    </section>
+  );
+}
