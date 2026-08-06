@@ -310,6 +310,36 @@ describe("monitoring migration contract", () => {
     expect(functionBody).toContain("returning * into notification_row");
   });
 
+  it("requeues only failed notifications and leaves unknown terminal", () => {
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "supabase/migrations/202608060002_monitoring_functions.sql",
+      ),
+      "utf8",
+    )
+      .replace(/--.*$/gm, "")
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+    const functionStart = migration.indexOf(
+      "create or replace function public.create_pending_notification_for_run",
+    );
+    const functionBody = migration.slice(
+      functionStart,
+      migration.indexOf("$$;", functionStart),
+    );
+
+    expect(functionBody).toContain("if notification_row.status = 'failed'");
+    expect(functionBody).toContain(
+      "update public.notifications n set status = 'pending'",
+    );
+    expect(functionBody).toContain("n.status = 'failed'");
+    expect(functionBody).toContain("error_code = null");
+    expect(functionBody).not.toMatch(
+      /notification_row\.status = 'unknown'[\s\S]*set status = 'pending'/u,
+    );
+  });
+
   it("passes an absolute create deadline into the RPC and enforces it around locks and insert", () => {
     const migration = readFileSync(
       resolve(

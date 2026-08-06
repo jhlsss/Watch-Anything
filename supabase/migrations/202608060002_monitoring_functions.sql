@@ -961,6 +961,33 @@ begin
     raise exception 'NOTIFICATION_NOT_FOUND';
   end if;
 
+  if notification_row.status = 'failed' then
+    update public.radar_runs
+       set lease_expires_at = lease_expires_at
+     where id = p_run_id
+       and radar_id = radar_id_for_run
+       and status = 'running'
+       and lease_owner = p_lease_owner
+       and lease_expires_at > clock_timestamp()
+    returning id into lease_cas_id;
+
+    if lease_cas_id is null then
+      raise exception 'RUN_NOT_CLAIMED';
+    end if;
+
+    update public.notifications n
+       set status = 'pending',
+           error_code = null,
+           claimed_at = null
+     where n.id = notification_row.id
+       and n.status = 'failed'
+    returning * into notification_row;
+
+    if not found then
+      raise exception 'NOTIFICATION_NOT_FOUND';
+    end if;
+  end if;
+
   if notification_row.status = 'sending'
      and (
        notification_row.claimed_at is null

@@ -662,7 +662,7 @@ class MonitoringFakeClient implements MonitoringClient {
   persistFindingRpcError: string | null = null;
   tavilyBaselineCompletedAt: string | null = null;
   runLeaseExpiresAt = "2099-08-06T00:00:00.000Z";
-  existingNotificationStatus: "pending" | "sending" | "unknown" = "pending";
+  existingNotificationStatus: "pending" | "sending" | "failed" | "unknown" = "pending";
   existingNotificationExpiredSending = false;
   private findingCounter = 0;
 
@@ -952,6 +952,9 @@ class MonitoringFakeClient implements MonitoringClient {
       });
     }
     if (functionName === "create_pending_notification_for_run") {
+      if (this.existingNotificationStatus === "failed") {
+        this.existingNotificationStatus = "pending";
+      }
       if (
         this.existingNotificationStatus === "sending" &&
         this.existingNotificationExpiredSending
@@ -1566,6 +1569,72 @@ describe("run pipeline", () => {
             importance_score: 90,
             confidence: 0.9,
             event_key: "expired-sending-event",
+            duplicate_of_event_key: null,
+            reason: "matches",
+          },
+        },
+      ],
+      sendNotification,
+    });
+
+    expect(client.existingNotificationStatus).toBe("unknown");
+    expect(sendNotification).not.toHaveBeenCalled();
+  });
+
+  it("requeues a failed notification on the next production run", async () => {
+    const client = new MonitoringFakeClient();
+    client.tavilyBaselineCompletedAt = "2026-08-05T00:00:00.000Z";
+    client.existingNotificationStatus = "failed";
+    const sendNotification = vi.fn().mockResolvedValue({
+      notificationId: "notification-1",
+      status: "sent",
+      messageId: 1,
+    });
+
+    await runRadar("radar-1", "baseline", {
+      client,
+      searchTavily: async () => [testCandidate],
+      fetchRss: async () => [],
+      evaluate: async () => [
+        {
+          candidate: testCandidate,
+          evaluation: {
+            relevant: true,
+            relevance_score: 90,
+            importance_score: 90,
+            confidence: 0.9,
+            event_key: "failed-notification-event",
+            duplicate_of_event_key: null,
+            reason: "matches",
+          },
+        },
+      ],
+      sendNotification,
+    });
+
+    expect(client.existingNotificationStatus).toBe("pending");
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an unknown notification terminal and never sends it", async () => {
+    const client = new MonitoringFakeClient();
+    client.tavilyBaselineCompletedAt = "2026-08-05T00:00:00.000Z";
+    client.existingNotificationStatus = "unknown";
+    const sendNotification = vi.fn();
+
+    await runRadar("radar-1", "baseline", {
+      client,
+      searchTavily: async () => [testCandidate],
+      fetchRss: async () => [],
+      evaluate: async () => [
+        {
+          candidate: testCandidate,
+          evaluation: {
+            relevant: true,
+            relevance_score: 90,
+            importance_score: 90,
+            confidence: 0.9,
+            event_key: "unknown-notification-event",
             duplicate_of_event_key: null,
             reason: "matches",
           },
