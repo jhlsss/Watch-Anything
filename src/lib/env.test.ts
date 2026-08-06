@@ -6,7 +6,7 @@ const validServerEnv = {
   CRON_SECRET: "cron-secret",
   RULE_TOKEN_SECRET: "rule-token-secret-that-is-at-least-32-chars",
   TAVILY_API_KEY: "tavily-key",
-  GROQ_API_KEY: "groq-key",
+  GEMINI_API_KEY: "gemini-key",
   TELEGRAM_BOT_TOKEN: "telegram-token",
   TELEGRAM_BOT_USERNAME: "watch_anything_bot",
   TELEGRAM_WEBHOOK_SECRET: "telegram-webhook-secret",
@@ -17,8 +17,8 @@ describe("parseServerEnv", () => {
     expect(() => parseServerEnv({})).toThrow("SUPABASE_SERVICE_ROLE_KEY");
   });
 
-  it("uses the stable Groq model when no override is provided", () => {
-    expect(parseServerEnv(validServerEnv).GROQ_MODEL).toBe("openai/gpt-oss-20b");
+  it("uses the stable Gemini model when no override is provided", () => {
+    expect(parseServerEnv(validServerEnv).GEMINI_MODEL).toBe("gemini-3.1-flash-lite");
   });
 });
 
