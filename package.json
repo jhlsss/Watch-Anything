@@ -10,7 +10,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "smoke:telegram": "tsx scripts/smoke-telegram-notification.ts"
+    "smoke:telegram": "tsx scripts/smoke-telegram-notification.ts",
+    "smoke:gemini": "tsx scripts/smoke-gemini.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
