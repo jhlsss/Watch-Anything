@@ -217,13 +217,15 @@ export default async function RadarDetailPage({ params, searchParams }: { params
     notFound();
   }
 
+  const paramsValue = await searchParams;
+  const redirectLocale = await resolveLocale(paramsValue, null);
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
   if (!user) {
-    redirect("/auth?mode=login&next=dashboard");
+    redirect(`/auth?mode=login&next=dashboard&lang=${redirectLocale}`);
   }
 
   const [{ data: profile, error: profileError }, { data: radarData, error: radarError }, { data: connection, error: connectionError }] = await Promise.all([
@@ -237,7 +239,6 @@ export default async function RadarDetailPage({ params, searchParams }: { params
     supabase.from("telegram_connections").select("telegram_username").eq("user_id", user.id).maybeSingle(),
   ]);
 
-  const paramsValue = await searchParams;
   const locale = await resolveLocale(paramsValue, (profile as { locale?: string } | null)?.locale ?? null);
   const labels = copy[locale];
   const localize = (href: string) => `${href}?lang=${locale}`;

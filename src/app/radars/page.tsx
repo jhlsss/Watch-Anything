@@ -93,13 +93,15 @@ function cardRadar(row: RadarRow, newFindings: number): RadarCardRadar {
 }
 
 export default async function RadarsPage({ searchParams }: { searchParams: SearchParams }) {
+  const params = await searchParams;
+  const redirectLocale = await resolveLocale(params, null);
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
   if (!user) {
-    redirect("/auth?mode=login&next=dashboard");
+    redirect(`/auth?mode=login&next=dashboard&lang=${redirectLocale}`);
   }
 
   const [{ data: profile }, { data: radarData, error: radarError }] = await Promise.all([
@@ -111,7 +113,6 @@ export default async function RadarsPage({ searchParams }: { searchParams: Searc
       .order("created_at", { ascending: false }),
   ]);
 
-  const params = await searchParams;
   const locale = await resolveLocale(params, (profile as { locale?: string } | null)?.locale ?? null);
   const labels = copy[locale];
   const localize = (href: string) => `${href}?lang=${locale}`;

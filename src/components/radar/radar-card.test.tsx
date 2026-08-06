@@ -6,6 +6,9 @@ import type { ReactElement } from "react";
 const notFoundMock = vi.hoisted(() => vi.fn(() => {
   throw new Error("NOT_FOUND");
 }));
+const redirectMock = vi.hoisted(() => vi.fn((path: string) => {
+  throw new Error(`REDIRECT:${path}`);
+}));
 const createBrowserClientMock = vi.hoisted(() => vi.fn());
 const createServerClientMock = vi.hoisted(() => vi.fn());
 
@@ -31,9 +34,7 @@ vi.mock("next/navigation", () => ({
     refresh: vi.fn(),
   }),
   notFound: notFoundMock,
-  redirect: vi.fn((path: string) => {
-    throw new Error(`REDIRECT:${path}`);
-  }),
+  redirect: redirectMock,
 }));
 
 type QueryResult = { data: unknown; error: unknown };
@@ -73,6 +74,14 @@ function setServerClient(fromMock: ReturnType<typeof vi.fn>) {
       getUser: vi.fn().mockResolvedValue({ data: { user: testUser } }),
     },
     from: fromMock,
+  });
+}
+
+function setUnauthenticatedClient() {
+  createServerClientMock.mockReturnValue({
+    auth: {
+      getUser: vi.fn().mockResolvedValue({ data: { user: null } }),
+    },
   });
 }
 
@@ -168,6 +177,7 @@ describe("RadarCard", () => {
     vi.mocked(createClient).mockReset();
     createServerClientMock.mockReset();
     notFoundMock.mockClear();
+    redirectMock.mockClear();
     document.cookie = "wa_locale=; Path=/; Max-Age=0";
   });
 
@@ -573,5 +583,57 @@ describe("RadarCard", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent("Some live details could not be loaded. Refresh and try again.");
     expect(screen.queryByText("Telegram not connected")).not.toBeInTheDocument();
+  });
+
+  it("keeps zh-CN on the unauthenticated Dashboard redirect", async () => {
+    setUnauthenticatedClient();
+
+    await expect(DashboardPage({ searchParams: Promise.resolve({ lang: "zh-CN" }) })).rejects.toThrow(
+      "REDIRECT:/auth?mode=login&next=dashboard&lang=zh-CN",
+    );
+    expect(redirectMock).toHaveBeenCalledWith("/auth?mode=login&next=dashboard&lang=zh-CN");
+  });
+
+  it("keeps zh-CN on the unauthenticated My Radars redirect", async () => {
+    setUnauthenticatedClient();
+
+    await expect(RadarsPage({ searchParams: Promise.resolve({ lang: "zh-CN" }) })).rejects.toThrow(
+      "REDIRECT:/auth?mode=login&next=dashboard&lang=zh-CN",
+    );
+    expect(redirectMock).toHaveBeenCalledWith("/auth?mode=login&next=dashboard&lang=zh-CN");
+  });
+
+  it("keeps zh-CN on the unauthenticated Radar detail redirect", async () => {
+    setUnauthenticatedClient();
+
+    await expect(
+      RadarDetailPage({
+        params: Promise.resolve({ id: detailRadarRow.id }),
+        searchParams: Promise.resolve({ lang: "zh-CN" }),
+      }),
+    ).rejects.toThrow("REDIRECT:/auth?mode=login&next=dashboard&lang=zh-CN");
+    expect(redirectMock).toHaveBeenCalledWith("/auth?mode=login&next=dashboard&lang=zh-CN");
+  });
+
+  it("falls back to the safe default locale for invalid unauthenticated lang values", async () => {
+    setUnauthenticatedClient();
+    await expect(DashboardPage({ searchParams: Promise.resolve({ lang: "fr" }) })).rejects.toThrow(
+      "REDIRECT:/auth?mode=login&next=dashboard&lang=en",
+    );
+
+    redirectMock.mockClear();
+    setUnauthenticatedClient();
+    await expect(RadarsPage({ searchParams: Promise.resolve({ lang: "fr" }) })).rejects.toThrow(
+      "REDIRECT:/auth?mode=login&next=dashboard&lang=en",
+    );
+
+    redirectMock.mockClear();
+    setUnauthenticatedClient();
+    await expect(
+      RadarDetailPage({
+        params: Promise.resolve({ id: detailRadarRow.id }),
+        searchParams: Promise.resolve({ lang: "fr" }),
+      }),
+    ).rejects.toThrow("REDIRECT:/auth?mode=login&next=dashboard&lang=en");
   });
 });
