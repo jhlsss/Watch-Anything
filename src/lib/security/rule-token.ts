@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 import { z } from "zod";
 
@@ -9,6 +9,8 @@ import {
 
 const RULE_TOKEN_VERSION = 1 as const;
 const RULE_TOKEN_TTL_MS = 2 * 60 * 60 * 1_000;
+const GUEST_COOKIE_VERSION = 1 as const;
+const GUEST_COOKIE_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 
 const tokenPayloadSchema = z
   .object({
@@ -16,6 +18,15 @@ const tokenPayloadSchema = z
     issuedAt: z.number().int().nonnegative(),
     expiresAt: z.number().int().positive(),
     rules: radarRulesSchema,
+  })
+  .strict();
+
+const guestCookiePayloadSchema = z
+  .object({
+    version: z.literal(GUEST_COOKIE_VERSION),
+    guestId: z.string().min(1).max(128),
+    issuedAt: z.number().int().nonnegative(),
+    expiresAt: z.number().int().positive(),
   })
   .strict();
 
@@ -36,6 +47,12 @@ function encodePayload(payload: z.infer<typeof tokenPayloadSchema>): string {
 function signPayload(encodedPayload: string): string {
   return createHmac("sha256", getRuleTokenSecret())
     .update(encodedPayload)
+    .digest("base64url");
+}
+
+function signGuestPayload(encodedPayload: string): string {
+  return createHmac("sha256", getRuleTokenSecret())
+    .update(`guest-cookie.${encodedPayload}`)
     .digest("base64url");
 }
 
@@ -114,4 +131,80 @@ export function verifyRuleToken(token: string, now = Date.now()): RadarRulesInpu
   return payloadResult.data.rules;
 }
 
+export function signGuestCookie(guestId: string, now = Date.now()): string {
+  if (!guestCookiePayloadSchema.shape.guestId.safeParse(guestId).success) {
+    throw new Error("INVALID_GUEST_ID");
+  }
+
+  const payload = {
+    version: GUEST_COOKIE_VERSION,
+    guestId,
+    issuedAt: now,
+    expiresAt: now + GUEST_COOKIE_TTL_MS,
+  } satisfies z.infer<typeof guestCookiePayloadSchema>;
+  const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+
+  return `g1.${encodedPayload}.${signGuestPayload(encodedPayload)}`;
+}
+
+export function verifyGuestCookie(cookie: string, now = Date.now()): string {
+  if (typeof cookie !== "string") {
+    throw new Error("INVALID_GUEST_COOKIE");
+  }
+
+  const parts = cookie.split(".");
+
+  if (parts.length !== 3 || parts[0] !== "g1" || !parts[1] || !parts[2]) {
+    throw new Error("INVALID_GUEST_COOKIE");
+  }
+
+  const [, encodedPayload, encodedSignature] = parts;
+  const expectedSignature = signGuestPayload(encodedPayload);
+  const actualSignatureBuffer = Buffer.from(encodedSignature, "base64url");
+  const expectedSignatureBuffer = Buffer.from(expectedSignature, "base64url");
+
+  if (
+    actualSignatureBuffer.length !== expectedSignatureBuffer.length ||
+    !timingSafeEqual(actualSignatureBuffer, expectedSignatureBuffer)
+  ) {
+    throw new Error("INVALID_GUEST_COOKIE");
+  }
+
+  let parsedPayload: unknown;
+
+  try {
+    parsedPayload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"));
+  } catch {
+    throw new Error("INVALID_GUEST_COOKIE");
+  }
+
+  const payloadResult = guestCookiePayloadSchema.safeParse(parsedPayload);
+
+  if (
+    !payloadResult.success ||
+    payloadResult.data.expiresAt - payloadResult.data.issuedAt !== GUEST_COOKIE_TTL_MS ||
+    payloadResult.data.issuedAt > now
+  ) {
+    throw new Error("INVALID_GUEST_COOKIE");
+  }
+
+  if (now >= payloadResult.data.expiresAt) {
+    throw new Error("EXPIRED_GUEST_COOKIE");
+  }
+
+  return payloadResult.data.guestId;
+}
+
+export function hashGuestIdentity(guestId: string, trustedIp?: string): string {
+  const normalizedIp = trustedIp?.trim();
+  const identity = normalizedIp ? `ip:${normalizedIp}` : `guest:${guestId}`;
+
+  return createHash("sha256").update(identity, "utf8").digest("hex");
+}
+
+export function hashRuleToken(token: string): string {
+  return createHash("sha256").update(token, "utf8").digest("hex");
+}
+
 export const RULE_TOKEN_TTL = RULE_TOKEN_TTL_MS;
+export const GUEST_COOKIE_TTL = GUEST_COOKIE_TTL_MS;

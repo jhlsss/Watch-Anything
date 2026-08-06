@@ -1,14 +1,28 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
 
 import {
   formatRuleFlowError,
   readRuleFlowStorage,
+  submitPendingSetup,
   writeRuleFlowStorage,
 } from "@/app/auth/page";
 import { authenticateAction } from "@/app/auth/actions";
+import { POST as parseRulesPost } from "@/app/api/rules/parse/route";
+import { getOrCreatePendingSetup } from "@/app/api/pending-setups/route";
+import { hasImmutableRuleChanges } from "@/app/rules/page";
+import type { RadarRules } from "@/types/contracts";
 
-const { createServerClientMock, signInMock, signUpMock } = vi.hoisted(() => ({
+const {
+  createAdminClientMock,
+  createServerClientMock,
+  parseRulesMock,
+  signInMock,
+  signUpMock,
+} = vi.hoisted(() => ({
+  createAdminClientMock: vi.fn(),
   createServerClientMock: vi.fn(),
+  parseRulesMock: vi.fn(),
   signInMock: vi.fn(),
   signUpMock: vi.fn(),
 }));
@@ -16,6 +30,30 @@ const { createServerClientMock, signInMock, signUpMock } = vi.hoisted(() => ({
 vi.mock("@/lib/supabase/server", () => ({
   createClient: createServerClientMock,
 }));
+
+vi.mock("@/lib/supabase/admin", () => ({
+  createClient: createAdminClientMock,
+}));
+
+vi.mock("@/lib/ai/parse-rules", () => ({
+  parseRules: parseRulesMock,
+}));
+
+const validRules: RadarRules = {
+  radarName: "LISA Official Radar",
+  subject: "Track official LISA releases and tours.",
+  aliases: ["Lalisa Manobal"],
+  includeTopics: ["official releases"],
+  excludeTopics: [],
+  searchQuery: "LISA official releases",
+  importanceThreshold: 75,
+  intervalMinutes: 360,
+};
+
+beforeAll(() => {
+  process.env.RULE_TOKEN_SECRET =
+    "test-rule-token-secret-that-is-at-least-32-characters-long";
+});
 
 describe("authenticateAction", () => {
   beforeEach(() => {
@@ -129,5 +167,120 @@ describe("Auth rule restoration helpers", () => {
   it("turns an expired signed token into a request to prepare rules again", () => {
     expect(formatRuleFlowError("EXPIRED_RULE_TOKEN", "zh-CN")).toContain("重新整理");
     expect(formatRuleFlowError("EXPIRED_RULE_TOKEN", "en")).toContain("prepare");
+  });
+
+  it("clears persisted rules only after pending setup creation succeeds", async () => {
+    const flow = {
+      originalPrompt: "Track LISA releases",
+      ruleToken: "signed-token",
+      editableDelta: {
+        radarName: "LISA Radar",
+        includeTopics: ["official releases"],
+        excludeTopics: [],
+      },
+    };
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ next: "connect-telegram" }), { status: 200 }),
+    );
+
+    writeRuleFlowStorage(flow);
+    await expect(submitPendingSetup(flow, fetcher)).resolves.toEqual({
+      ok: true,
+      next: "connect-telegram",
+    });
+    expect(readRuleFlowStorage()).toBeNull();
+
+    writeRuleFlowStorage(flow);
+    fetcher.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "EXPIRED_RULE_TOKEN" }), { status: 400 }),
+    );
+    await expect(submitPendingSetup(flow, fetcher)).resolves.toEqual({
+      ok: false,
+      error: "EXPIRED_RULE_TOKEN",
+    });
+    expect(readRuleFlowStorage()).toEqual(flow);
+  });
+});
+
+describe("parse route quota claim", () => {
+  beforeEach(() => {
+    createAdminClientMock.mockReturnValue({
+      rpc: vi.fn().mockResolvedValue({
+        data: { allowed: false, identity_count: 3, global_count: 3 },
+        error: null,
+      }),
+    });
+    parseRulesMock.mockReset();
+  });
+
+  it("uses the atomic guest quota RPC and returns 429 when it denies", async () => {
+    const admin = createAdminClientMock();
+    const request = new NextRequest("http://localhost/api/rules/parse", {
+      method: "POST",
+      body: JSON.stringify({ prompt: "Track LISA releases", locale: "en" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const response = await parseRulesPost(request);
+
+    expect(response.status).toBe(429);
+    expect(admin.rpc).toHaveBeenCalledWith("claim_guest_ai_request", {
+      p_identity_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(parseRulesMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("pending setup idempotency", () => {
+  it("returns the existing setup without inserting a replay", async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: { id: "setup-1", expires_at: "2099-01-01T00:00:00.000Z" },
+      error: null,
+    });
+    const insert = vi.fn();
+    const query = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      gt: vi.fn().mockReturnThis(),
+      maybeSingle,
+      insert,
+    };
+    const admin = { from: vi.fn().mockReturnValue(query) };
+
+    await expect(
+      getOrCreatePendingSetup({
+        admin: admin as never,
+        userId: "user-1",
+        originalPrompt: "Track LISA releases",
+        rules: validRules,
+        ruleTokenHash: "token-hash",
+        expiresAt: "2099-01-02T00:00:00.000Z",
+      }),
+    ).resolves.toEqual({ id: "setup-1" });
+    expect(insert).not.toHaveBeenCalled();
+  });
+});
+
+describe("editable rule boundary", () => {
+  it("detects changes to signed non-delta fields", () => {
+    expect(
+      hasImmutableRuleChanges(
+        { ...validRules, subject: "changed" },
+        validRules,
+      ),
+    ).toBe(true);
+    expect(
+      hasImmutableRuleChanges(
+        { ...validRules, searchQuery: "changed" },
+        validRules,
+      ),
+    ).toBe(true);
+    expect(
+      hasImmutableRuleChanges(
+        { ...validRules, importanceThreshold: 80 },
+        validRules,
+      ),
+    ).toBe(true);
+    expect(hasImmutableRuleChanges(validRules, validRules)).toBe(false);
   });
 });

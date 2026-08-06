@@ -4,7 +4,14 @@ import {
   editableRuleDeltaSchema,
   radarRulesSchema,
 } from "@/lib/validation/radar-rules";
-import { signRuleToken, verifyRuleToken } from "@/lib/security/rule-token";
+import {
+  hashGuestIdentity,
+  hashRuleToken,
+  signGuestCookie,
+  signRuleToken,
+  verifyGuestCookie,
+  verifyRuleToken,
+} from "@/lib/security/rule-token";
 import type { RadarRules } from "@/types/contracts";
 
 const validRules: RadarRules = {
@@ -76,5 +83,29 @@ describe("rule token", () => {
     } finally {
       process.env.RULE_TOKEN_SECRET = originalSecret;
     }
+  });
+});
+
+describe("signed guest identity", () => {
+  it("accepts a server-signed guest cookie and rejects tampering or expiry", () => {
+    const now = Date.parse("2026-08-06T00:00:00.000Z");
+    const cookie = signGuestCookie("guest-1", now);
+
+    expect(verifyGuestCookie(cookie, now + 60_000)).toBe("guest-1");
+    expect(() => verifyGuestCookie(`${cookie}x`, now)).toThrow("INVALID_GUEST_COOKIE");
+    expect(() => verifyGuestCookie(cookie, now + 30 * 24 * 60 * 60 * 1_000 + 1)).toThrow(
+      "EXPIRED_GUEST_COOKIE",
+    );
+  });
+
+  it("binds identity hashes to trusted IPs and uses the signed id when IP is unknown", () => {
+    expect(hashGuestIdentity("guest-1", "203.0.113.10")).toBe(
+      hashGuestIdentity("guest-2", "203.0.113.10"),
+    );
+    expect(hashGuestIdentity("guest-1", "203.0.113.10")).not.toBe(
+      hashGuestIdentity("guest-1", "203.0.113.11"),
+    );
+    expect(hashGuestIdentity("guest-1")).not.toBe(hashGuestIdentity("guest-2"));
+    expect(hashRuleToken("signed-token")).toMatch(/^[a-f0-9]{64}$/);
   });
 });

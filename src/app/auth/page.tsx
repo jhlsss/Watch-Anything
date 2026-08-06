@@ -116,6 +116,50 @@ export function formatRuleFlowError(error: unknown, locale: Locale): string {
     : "We could not continue right now. Please try again.";
 }
 
+export type PendingSetupResult =
+  | { ok: true; next: "connect-telegram" | "radar"; radarId?: string }
+  | { ok: false; error: string };
+
+export async function submitPendingSetup(
+  flow: RuleFlowStorage,
+  fetcher: typeof fetch = fetch,
+): Promise<PendingSetupResult> {
+  try {
+    const response = await fetcher("/api/pending-setups", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        originalPrompt: flow.originalPrompt,
+        ruleToken: flow.ruleToken,
+        editableDelta: flow.editableDelta,
+      }),
+    });
+    const body = (await response.json()) as {
+      error?: string;
+      next?: string;
+      radarId?: string;
+    };
+
+    if (!response.ok) {
+      return { ok: false, error: body.error ?? "PENDING_SETUP_FAILED" };
+    }
+
+    if (body.next === "radar" && body.radarId) {
+      clearRuleFlowStorage();
+      return { ok: true, next: "radar", radarId: body.radarId };
+    }
+
+    if (body.next !== "connect-telegram") {
+      return { ok: false, error: "PENDING_SETUP_FAILED" };
+    }
+
+    clearRuleFlowStorage();
+    return { ok: true, next: "connect-telegram" };
+  } catch {
+    return { ok: false, error: "PENDING_SETUP_FAILED" };
+  }
+}
+
 export default function AuthPage({
   searchParams,
 }: {
@@ -156,38 +200,20 @@ export default function AuthPage({
     }
 
     if (result.next === "/connect-telegram" && ruleFlow?.ruleToken && ruleFlow.editableDelta) {
-      try {
-        const pendingResponse = await fetch("/api/pending-setups", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            originalPrompt: ruleFlow.originalPrompt,
-            ruleToken: ruleFlow.ruleToken,
-            editableDelta: ruleFlow.editableDelta,
-          }),
-        });
-        const pendingBody = (await pendingResponse.json()) as {
-          error?: string;
-          next?: string;
-          radarId?: string;
-        };
+      const pendingResult = await submitPendingSetup(ruleFlow);
 
-        if (!pendingResponse.ok) {
-          setError(formatRuleFlowError(pendingBody.error, locale));
-          return;
-        }
-
-        if (pendingBody.next === "radar" && pendingBody.radarId) {
-          router.push(`/radars/${pendingBody.radarId}`);
-          return;
-        }
-
-        router.push(`/connect-telegram?lang=${locale}`);
-        return;
-      } catch {
-        setError(formatRuleFlowError("PENDING_SETUP_FAILED", locale));
+      if (!pendingResult.ok) {
+        setError(formatRuleFlowError(pendingResult.error, locale));
         return;
       }
+
+      if (pendingResult.next === "radar" && pendingResult.radarId) {
+        router.push(`/radars/${pendingResult.radarId}`);
+        return;
+      }
+
+      router.push(`/connect-telegram?lang=${locale}`);
+      return;
     }
 
     router.push(`${result.next}?lang=${locale}`);

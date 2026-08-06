@@ -1,46 +1,72 @@
-import { createHash } from "node:crypto";
 import { randomUUID } from "node:crypto";
 
 import { NextRequest, NextResponse } from "next/server";
 
 import { parseRules } from "@/lib/ai/parse-rules";
 import { createClient as createAdminClient } from "@/lib/supabase/admin";
-import { signRuleToken } from "@/lib/security/rule-token";
+import {
+  hashGuestIdentity,
+  signGuestCookie,
+  signRuleToken,
+  verifyGuestCookie,
+} from "@/lib/security/rule-token";
 import { ruleParseRequestSchema } from "@/lib/validation/radar-rules";
 
 const GUEST_ID_COOKIE = "wa_guest_id";
 const GUEST_ID_MAX_AGE = 60 * 60 * 24 * 30;
-const DAILY_IDENTITY_LIMIT = 3;
-const DAILY_GLOBAL_LIMIT = 20;
 
-function getGuestIdentity(request: NextRequest): { guestId: string; identityHash: string } {
-  const cookieValue = request.cookies.get(GUEST_ID_COOKIE)?.value;
-  const guestId = cookieValue && cookieValue.length <= 128 ? cookieValue : randomUUID();
-  const forwardedIp = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  const ip = forwardedIp || request.headers.get("x-real-ip") || "unknown";
-  const identityHash = createHash("sha256")
-    .update(`${guestId}:${ip}`, "utf8")
-    .digest("hex");
+function getTrustedClientIp(request: NextRequest): string | undefined {
+  const vercelForwardedIp = request.headers
+    .get("x-vercel-forwarded-for")
+    ?.split(",")[0]
+    ?.trim();
 
-  return { guestId, identityHash };
+  if (vercelForwardedIp) {
+    return vercelForwardedIp;
+  }
+
+  if (process.env.VERCEL !== "1" && process.env.NODE_ENV !== "production") {
+    return undefined;
+  }
+
+  return (
+    request.headers.get("x-real-ip")?.trim() ||
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    undefined
+  );
 }
 
-function startOfUtcDay(): string {
-  const now = new Date();
-  now.setUTCHours(0, 0, 0, 0);
-  return now.toISOString();
+function getGuestIdentity(request: NextRequest): {
+  guestId: string;
+  guestCookie: string;
+  identityHash: string;
+} {
+  const cookieValue = request.cookies.get(GUEST_ID_COOKIE)?.value;
+  let guestId: string;
+
+  try {
+    guestId = cookieValue ? verifyGuestCookie(cookieValue) : randomUUID();
+  } catch {
+    guestId = randomUUID();
+  }
+
+  return {
+    guestId,
+    guestCookie: signGuestCookie(guestId),
+    identityHash: hashGuestIdentity(guestId, getTrustedClientIp(request)),
+  };
 }
 
 function withGuestCookie(
   body: unknown,
   status: number,
-  guestId: string,
+  guestCookie: string,
 ): NextResponse {
   const response = NextResponse.json(body, { status });
 
   response.cookies.set({
     name: GUEST_ID_COOKIE,
-    value: guestId,
+    value: guestCookie,
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
@@ -51,71 +77,86 @@ function withGuestCookie(
   return response;
 }
 
-async function countRequests(
+async function claimGuestAiRequest(
   admin: ReturnType<typeof createAdminClient>,
-  start: string,
-  identityHash?: string,
-): Promise<number> {
-  let query = admin
-    .from("guest_ai_requests")
-    .select("id", { count: "exact", head: true })
-    .gte("created_at", start);
-
-  if (identityHash) {
-    query = query.eq("identity_hash", identityHash);
-  }
-
-  const { count, error } = await query;
+  identityHash: string,
+): Promise<{ allowed: boolean }> {
+  const { data, error } = await admin.rpc("claim_guest_ai_request", {
+    p_identity_hash: identityHash,
+  });
 
   if (error) {
-    console.error("Guest rule request rate-limit lookup failed.", error);
+    console.error("Guest rule request quota claim failed.", error);
     throw new Error("RATE_LIMIT_STORAGE_UNAVAILABLE");
   }
 
-  return count ?? 0;
+  const row = Array.isArray(data) ? data[0] : data;
+
+  if (!row || typeof row !== "object" || typeof row.allowed !== "boolean") {
+    console.error("Guest rule request quota claim returned an invalid result.");
+    throw new Error("RATE_LIMIT_STORAGE_UNAVAILABLE");
+  }
+
+  return { allowed: row.allowed };
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const { guestId, identityHash } = getGuestIdentity(request);
+  let guestIdentity: ReturnType<typeof getGuestIdentity>;
+
+  try {
+    guestIdentity = getGuestIdentity(request);
+  } catch (error) {
+    console.error("Guest identity could not be established.", error);
+    return NextResponse.json({ error: "RATE_LIMIT_STORAGE_UNAVAILABLE" }, { status: 503 });
+  }
+
   let parsedBody: unknown;
 
   try {
     parsedBody = await request.json();
   } catch {
-    return withGuestCookie({ error: "INVALID_RULE_REQUEST" }, 400, guestId);
+    return withGuestCookie({ error: "INVALID_RULE_REQUEST" }, 400, guestIdentity.guestCookie);
   }
 
   const parsedRequest = ruleParseRequestSchema.safeParse(parsedBody);
 
   if (!parsedRequest.success) {
-    return withGuestCookie({ error: "INVALID_RULE_REQUEST" }, 400, guestId);
+    return withGuestCookie({ error: "INVALID_RULE_REQUEST" }, 400, guestIdentity.guestCookie);
+  }
+
+  let admin: ReturnType<typeof createAdminClient>;
+
+  try {
+    admin = createAdminClient();
+    const claim = await claimGuestAiRequest(admin, guestIdentity.identityHash);
+
+    if (!claim.allowed) {
+      return withGuestCookie({ error: "RATE_LIMITED" }, 429, guestIdentity.guestCookie);
+    }
+  } catch (error) {
+    console.error("Guest rule request quota claim failed.", error);
+    return withGuestCookie(
+      { error: "RATE_LIMIT_STORAGE_UNAVAILABLE" },
+      503,
+      guestIdentity.guestCookie,
+    );
   }
 
   try {
-    const admin = createAdminClient();
-    const start = startOfUtcDay();
-    const identityCount = await countRequests(admin, start, identityHash);
-    const globalCount = await countRequests(admin, start);
-
-    if (identityCount >= DAILY_IDENTITY_LIMIT || globalCount >= DAILY_GLOBAL_LIMIT) {
-      return withGuestCookie({ error: "RATE_LIMITED" }, 429, guestId);
-    }
-
-    const { error: insertError } = await admin.from("guest_ai_requests").insert({
-      identity_hash: identityHash,
-    });
-
-    if (insertError) {
-      console.error("Guest rule request rate-limit write failed.", insertError);
-      return withGuestCookie({ error: "RATE_LIMIT_STORAGE_UNAVAILABLE" }, 503, guestId);
-    }
-
     const rules = await parseRules({ prompt: parsedRequest.data.prompt });
     const ruleToken = signRuleToken(rules);
 
-    return withGuestCookie({ rules, ruleToken }, 200, guestId);
+    return withGuestCookie(
+      { rules, ruleToken },
+      200,
+      guestIdentity.guestCookie,
+    );
   } catch (error) {
     console.error("Rule parsing failed.", error);
-    return withGuestCookie({ error: "RULE_PARSE_FAILED" }, 502, guestId);
+    return withGuestCookie(
+      { error: "RULE_PARSE_FAILED" },
+      502,
+      guestIdentity.guestCookie,
+    );
   }
 }

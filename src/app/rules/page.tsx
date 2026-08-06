@@ -16,6 +16,14 @@ import {
 } from "@/lib/validation/radar-rules";
 import type { RadarRules } from "@/types/contracts";
 
+export function hasImmutableRuleChanges(current: RadarRules, baseline: RadarRules): boolean {
+  return (
+    current.subject.trim() !== baseline.subject.trim() ||
+    current.searchQuery.trim() !== baseline.searchQuery.trim() ||
+    current.importanceThreshold !== baseline.importanceThreshold
+  );
+}
+
 export default function RulesPage({
   searchParams,
 }: {
@@ -31,6 +39,7 @@ export default function RulesPage({
   const [parseStatus, setParseStatus] = useState<"idle" | "loading" | "ready" | "error">(
     request?.trim() ? "loading" : "idle",
   );
+  const [immutableEditError, setImmutableEditError] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -123,6 +132,14 @@ export default function RulesPage({
             initialRules={parsedRules ?? initialRules}
             locale={locale}
             onConfirmRules={(rules) => {
+              setImmutableEditError(false);
+              const baselineRules = parsedRules ?? initialRules;
+
+              if (hasImmutableRuleChanges(rules, baselineRules)) {
+                setImmutableEditError(true);
+                return;
+              }
+
               const currentFlow = readRuleFlowStorage();
 
               if (!currentFlow?.ruleToken) {
@@ -137,6 +154,13 @@ export default function RulesPage({
               router.push(`/auth?lang=${locale}&mode=signup`);
             }}
           />
+          {immutableEditError ? (
+            <p className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-800" role="alert">
+              {locale === "zh-CN"
+                ? "只能编辑 Radar 名称、关注项和排除项。"
+                : "Only the Radar name, include topics, and exclude topics can be edited."}
+            </p>
+          ) : null}
           {parseStatus === "loading" ? (
             <p className="mt-4 flex items-center gap-2 text-sm text-slate-500" role="status">
               <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
