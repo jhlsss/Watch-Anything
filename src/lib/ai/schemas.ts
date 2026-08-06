@@ -268,13 +268,33 @@ async function runStructuredCompletion<T>({
   return parseStructuredContent(readMessageContent(response), validator);
 }
 
-function isRateLimitError(error: unknown): error is { status: 429; headers?: Headers } {
+function isRateLimitError(error: unknown): error is {
+  status: 429;
+  headers?: Headers;
+  message?: string;
+  error?: {
+    code?: string;
+    message?: string;
+  };
+} {
   return (
     typeof error === "object" &&
     error !== null &&
     "status" in error &&
     error.status === 429
   );
+}
+
+function isDailyTokenRateLimit(error: unknown): boolean {
+  if (!isRateLimitError(error)) {
+    return false;
+  }
+
+  const message = [error.message, error.error?.code, error.error?.message]
+    .filter(Boolean)
+    .join(" ");
+
+  return /tokens per day|\btpd\b/i.test(message);
 }
 
 function rateLimitRetryDelayMs(error: { headers?: Headers }): number {
@@ -313,7 +333,7 @@ async function runStructuredCompletionWithRateLimitRetry<T>(
   try {
     return await runStructuredCompletion(options);
   } catch (error) {
-    if (!isRateLimitError(error)) {
+    if (!isRateLimitError(error) || isDailyTokenRateLimit(error)) {
       throw error;
     }
 
@@ -353,6 +373,10 @@ export async function createStructuredOutput<T>({
       maxCompletionTokens,
     });
   } catch (error) {
+    if (isRateLimitError(error)) {
+      throw new AiAdapterError("GROQ_RATE_LIMITED", "Groq rate limit reached.");
+    }
+
     if (!(error instanceof AiAdapterError) || error.code !== "GROQ_INVALID_RESPONSE") {
       if (error instanceof AiAdapterError) {
         throw error;
@@ -379,6 +403,10 @@ export async function createStructuredOutput<T>({
         maxCompletionTokens,
       });
     } catch (retryError) {
+      if (isRateLimitError(retryError)) {
+        throw new AiAdapterError("GROQ_RATE_LIMITED", "Groq rate limit reached.");
+      }
+
       if (retryError instanceof AiAdapterError) {
         throw retryError;
       }

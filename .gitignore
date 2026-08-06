@@ -40,3 +40,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local agent and QA artifacts
+/.codegraph/
+/.gstack/
+/.superpowers/
+/supabase/.temp/
+/AGENTS.md
+/CLAUDE.md

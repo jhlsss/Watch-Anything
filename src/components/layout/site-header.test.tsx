@@ -16,4 +16,22 @@ describe("SiteHeader", () => {
 
     expect(screen.getByRole("link", { name: "工作方式" }).getAttribute("href")).toBe("/?lang=zh-CN#how");
   });
+
+  it("uses the same content rail as the landing sections", () => {
+    render(
+      <SiteHeader
+        locale="en"
+        brand="Watch Anything"
+        localeLabel="Language"
+        localeNames={{ en: "EN", "zh-CN": "中文" }}
+      />,
+    );
+
+    const contentRail = screen.getAllByRole("banner").at(-1)?.firstElementChild;
+    const className = contentRail?.getAttribute("class") ?? "";
+
+    expect(className).toContain("max-w-[1160px]");
+    expect(className).toContain("w-[calc(100%_-_28px)]");
+    expect(className).toContain("min-[850px]:w-[calc(100%_-_44px)]");
+  });
 });

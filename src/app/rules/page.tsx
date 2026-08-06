@@ -9,8 +9,8 @@ import {
   writeRuleFlowStorage,
 } from "@/lib/auth/rule-flow-storage";
 import type { RuleFlowStorage } from "@/lib/auth/rule-flow-storage";
-import { AppSidebar } from "@/components/layout/app-sidebar";
 import { RulesForm } from "@/components/radar/rules-form";
+import { RulesHeader } from "@/components/radar/rules-header";
 import { normalizeLocale, getMessages } from "@/lib/i18n";
 import {
   radarRulesSchema,
@@ -44,6 +44,7 @@ export default function RulesPage({
   const [immutableEditError, setImmutableEditError] = useState(false);
   const [parseAttempt, setParseAttempt] = useState(0);
   const [storedFlow, setStoredFlow] = useState<RuleFlowStorage | null>(null);
+  const [storageReady, setStorageReady] = useState(Boolean(request?.trim()));
   const prompt = request?.trim() || storedFlow?.originalPrompt || "";
   const resultMatchesPrompt = parsedPrompt === prompt && parsedAttempt === parseAttempt;
   const visibleStatus = !prompt
@@ -62,6 +63,7 @@ export default function RulesPage({
     void Promise.resolve().then(() => {
       if (active) {
         setStoredFlow(readRuleFlowStorage());
+        setStorageReady(true);
       }
     });
 
@@ -69,6 +71,12 @@ export default function RulesPage({
       active = false;
     };
   }, [request]);
+
+  useEffect(() => {
+    if (storageReady && !prompt) {
+      router.replace(`/?lang=${locale}`);
+    }
+  }, [locale, prompt, router, storageReady]);
 
   useEffect(() => {
     let active = true;
@@ -150,16 +158,23 @@ export default function RulesPage({
   };
 
   return (
-    <main className="flex min-h-screen min-w-0 overflow-x-hidden bg-slate-50 text-slate-950">
-      <AppSidebar locale={locale} currentPath="/rules" />
-      <div className="min-w-0 flex-1 px-4 py-6 pb-32 sm:px-6 min-[850px]:pb-6">
-        <div className="mx-auto w-full max-w-6xl">
+    <main className="min-h-screen min-w-0 overflow-x-hidden bg-[#f8f8fb] text-slate-950">
+      <RulesHeader
+        locale={locale}
+        brand={copy.common.brand}
+        localeLabel={copy.common.localeLabel}
+        localeNames={copy.common.locales}
+        process={copy.rules.process}
+        request={prompt}
+      />
+      <div className="mx-auto w-full max-w-[1080px] px-4 pb-10 pt-10 sm:px-0 sm:pt-16">
           {visibleRules && visibleStatus === "ready" ? (
             <RulesForm
               key="parsed-rules"
               initialRules={visibleRules}
               originalRequest={prompt}
               locale={locale}
+              backHref={`/?lang=${locale}`}
               onConfirmRules={(rules) => {
                 setImmutableEditError(false);
 
@@ -187,10 +202,18 @@ export default function RulesPage({
             <section className="mx-auto max-w-3xl rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
               <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-violet-600">{copy.rules.eyebrow}</p>
               <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">
-                {visibleStatus === "error" ? copy.rules.parseErrorTitle : copy.rules.noRequestTitle}
+                {visibleStatus === "error"
+                  ? copy.rules.parseErrorTitle
+                  : prompt
+                    ? copy.rules.parsingTitle
+                    : copy.rules.noRequestTitle}
               </h1>
               <p className="mt-3 text-sm leading-6 text-slate-600">
-                {visibleStatus === "error" ? copy.rules.description : copy.rules.noRequestDescription}
+                {visibleStatus === "error"
+                  ? copy.rules.description
+                  : prompt
+                    ? copy.rules.parsingDescription
+                    : copy.rules.noRequestDescription}
               </p>
 
               {prompt ? (
@@ -237,7 +260,6 @@ export default function RulesPage({
                 : "Only the Radar name, include topics, and exclude topics can be edited."}
             </p>
           ) : null}
-        </div>
       </div>
     </main>
   );

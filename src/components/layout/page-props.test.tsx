@@ -7,7 +7,7 @@ import RulesPage from "@/app/rules/page";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 
 afterEach(cleanup);

@@ -20,13 +20,20 @@ describe("RulesForm", () => {
   it("only exposes the three editable rule fields", () => {
     render(<RulesForm initialRules={rules} locale="en" />);
 
-    expect(screen.queryByRole("textbox", { name: "Original request" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Your request" })).toBeNull();
     expect(screen.queryByRole("textbox", { name: "Search query" })).toBeNull();
     expect(screen.queryByRole("spinbutton", { name: "Importance threshold" })).toBeNull();
-    expect(screen.getByText("Generated search terms")).not.toBeNull();
-    expect(screen.getByText("Request")).not.toBeNull();
-    expect(screen.getByText("Review rules")).not.toBeNull();
-    expect(screen.getByText("Activate")).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "Review what this Radar should watch" })).not.toBeNull();
+    expect(screen.getByText("Your request")).not.toBeNull();
+    expect(screen.getByText("Notify me about")).not.toBeNull();
+    expect(screen.getByText("Ignore")).not.toBeNull();
+    expect(screen.getByText("Generated search query")).not.toBeNull();
+    expect(screen.getByText("Importance threshold")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "+ Add topic" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "+ Add exclusion" })).not.toBeNull();
+    expect(screen.queryByLabelText("New include topic")).toBeNull();
+    expect(screen.queryByLabelText("New exclude topic")).toBeNull();
+    expect(screen.getByRole("link", { name: "Back to home" })).not.toBeNull();
   });
 
   it("adds a new include topic and submits the updated rules", () => {
@@ -52,7 +59,7 @@ describe("RulesForm", () => {
 
     render(<RulesForm initialRules={rules} locale="en" onConfirmRules={onConfirmRules} />);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Remove topic" })[1]);
+    fireEvent.click(screen.getAllByRole("button", { name: /Remove topic/ })[1]);
     fireEvent.click(screen.getByRole("button", { name: "Confirm rules" }));
 
     expect(onConfirmRules).toHaveBeenCalledWith(
@@ -60,6 +67,20 @@ describe("RulesForm", () => {
         excludeTopics: [],
       }),
     );
-    expect(screen.queryByText("×")).toBeNull();
+    expect(screen.queryByText("Fan edits")).toBeNull();
+  });
+
+  it("blocks confirmation and explains an invalid Radar name", () => {
+    const onConfirmRules = vi.fn();
+
+    render(<RulesForm initialRules={rules} locale="en" onConfirmRules={onConfirmRules} />);
+
+    const radarName = screen.getByRole("textbox", { name: "Radar name" });
+    fireEvent.change(radarName, { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm rules" }));
+
+    expect(onConfirmRules).not.toHaveBeenCalled();
+    expect(radarName.getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByRole("alert").textContent).toContain("at least 2 characters");
   });
 });

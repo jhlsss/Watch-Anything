@@ -7,30 +7,34 @@ type NavLink = {
   label: string;
 };
 
+const SITE_RAIL =
+  "mx-auto flex w-[calc(100%_-_28px)] max-w-[1160px] min-w-0 flex-nowrap items-center justify-between gap-2 py-3 min-[850px]:w-[calc(100%_-_44px)] sm:gap-4 sm:py-4";
+
 interface SiteHeaderProps {
   locale: Locale;
   basePath?: string;
   brand: string;
   localeLabel: string;
   localeNames: Record<Locale, string>;
+  currentHash?: string;
   navLinks?: NavLink[];
   primaryAction?: NavLink;
   secondaryAction?: NavLink;
   className?: string;
 }
 
-function withLocale(href: string, locale: Locale) {
+function withLocale(href: string, locale: Locale, currentHash = "") {
   const hashIndex = href.indexOf("#");
   const pathAndQuery = hashIndex === -1 ? href : href.slice(0, hashIndex);
-  const hash = hashIndex === -1 ? "" : href.slice(hashIndex);
+  const hash = hashIndex === -1 ? currentHash : href.slice(hashIndex);
   const separator = pathAndQuery.includes("?") ? "&" : "?";
 
   return `${pathAndQuery}${separator}lang=${locale}${hash}`;
 }
 
-function BrandMark() {
+export function BrandMark() {
   return (
-    <svg viewBox="0 0 40 40" className="h-8 w-8 text-violet-600" fill="none" aria-hidden="true">
+    <svg viewBox="0 0 40 40" className="h-7 w-7 text-violet-600 sm:h-8 sm:w-8" fill="none" aria-hidden="true">
       <circle cx="20" cy="20" r="15" stroke="currentColor" strokeWidth="3" />
       <circle cx="20" cy="20" r="8" stroke="currentColor" strokeWidth="2.5" />
       <circle cx="20" cy="20" r="2.7" fill="currentColor" />
@@ -45,6 +49,7 @@ export function SiteHeader({
   brand,
   localeLabel,
   localeNames,
+  currentHash = "",
   navLinks = [],
   primaryAction,
   secondaryAction,
@@ -52,30 +57,30 @@ export function SiteHeader({
 }: SiteHeaderProps) {
   return (
     <header className={cn("border-b border-slate-200 bg-white/95 backdrop-blur", className)}>
-      <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6">
-        <Link href={withLocale("/", locale)} className="flex min-w-0 shrink-0 items-center gap-3 font-semibold text-slate-950">
+      <div className={SITE_RAIL}>
+        <Link href={withLocale("/", locale)} className="flex min-w-0 shrink-0 items-center gap-2 text-sm font-semibold text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2 sm:gap-3 sm:text-base">
           <BrandMark />
           <span>{brand}</span>
         </Link>
 
-        <div className="flex min-w-0 flex-wrap items-center justify-end gap-3">
+        <div className="flex min-w-0 flex-nowrap items-center justify-end gap-2 sm:gap-3">
           {navLinks.length > 0 ? (
             <nav className="hidden items-center gap-5 text-sm text-slate-600 min-[850px]:flex">
               {navLinks.map((item) => (
-                <Link key={item.href} href={withLocale(item.href, locale)} className="transition hover:text-slate-950">
+                <Link key={item.href} href={withLocale(item.href, locale)} className="rounded-md transition hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2">
                   {item.label}
                 </Link>
               ))}
             </nav>
           ) : null}
 
-          <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-100 p-1" aria-label={localeLabel}>
+          <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1" aria-label={localeLabel}>
             {(Object.keys(localeNames) as Locale[]).map((value) => (
               <Link
                 key={value}
-                href={withLocale(basePath, value)}
+                href={withLocale(basePath, value, currentHash)}
                 className={cn(
-                  "rounded-lg px-2 py-1 text-xs font-semibold text-slate-500 transition",
+                  "inline-flex min-h-10 items-center rounded-lg px-3 py-2 text-xs font-semibold text-slate-500 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2",
                   value === locale && "bg-white text-slate-950 shadow-sm",
                 )}
               >
@@ -87,7 +92,7 @@ export function SiteHeader({
           {secondaryAction ? (
             <Link
               href={withLocale(secondaryAction.href, locale)}
-              className="hidden rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 min-[850px]:inline-flex"
+              className="hidden min-h-10 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2 min-[850px]:inline-flex"
             >
               {secondaryAction.label}
             </Link>
@@ -96,7 +101,7 @@ export function SiteHeader({
           {primaryAction ? (
             <Link
               href={withLocale(primaryAction.href, locale)}
-              className="inline-flex rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-violet-200 transition hover:bg-violet-500"
+              className="inline-flex min-h-10 whitespace-nowrap rounded-xl bg-violet-600 px-3 py-2 text-xs font-semibold text-white shadow-lg shadow-violet-200 transition hover:bg-violet-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2 sm:px-4 sm:text-sm"
             >
               {primaryAction.label}
             </Link>
