@@ -480,6 +480,7 @@ const missingConfig = Object.entries(integrationConfig)
   .filter(([, value]) => !value || value.startsWith("your-") || value.startsWith("replace-with"))
   .map(([name]) => name);
 const runIntegrationTest = missingConfig.length ? it.skip : it;
+const MONITORING_INTEGRATION_TIMEOUT_MS = 30_000;
 
 runIntegrationTest(
   `integration: monitoring RPC claims are atomic${
@@ -693,4 +694,5 @@ runIntegrationTest(
       }
     }
   },
+  MONITORING_INTEGRATION_TIMEOUT_MS,
 );
