@@ -11,19 +11,27 @@ type AuthMode = "login" | "signup";
 interface AuthFormProps {
   locale: Locale;
   initialMode?: AuthMode;
-  onAuthenticate: (payload: { mode: AuthMode; fullName: string; email: string; password: string }) => void;
+  error?: string;
+  onAuthenticate: (payload: { mode: AuthMode; fullName: string; email: string; password: string }) => void | Promise<void>;
 }
 
-export function AuthForm({ locale, initialMode = "login", onAuthenticate }: AuthFormProps) {
+export function AuthForm({ locale, initialMode = "login", error, onAuthenticate }: AuthFormProps) {
   const copy = getMessages(locale).auth;
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    onAuthenticate({ mode, fullName, email, password });
+    setIsSubmitting(true);
+
+    try {
+      await onAuthenticate({ mode, fullName, email, password });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -78,7 +86,17 @@ export function AuthForm({ locale, initialMode = "login", onAuthenticate }: Auth
         </label>
       </div>
 
-      <Button type="submit" className="mt-6 h-11 w-full rounded-2xl bg-violet-600 text-white hover:bg-violet-500">
+      {error ? (
+        <p role="alert" className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+          {error}
+        </p>
+      ) : null}
+
+      <Button
+        type="submit"
+        disabled={isSubmitting}
+        className="mt-6 h-11 w-full rounded-2xl bg-violet-600 text-white hover:bg-violet-500"
+      >
         {copy.continue}
       </Button>
 
