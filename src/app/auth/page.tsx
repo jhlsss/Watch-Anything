@@ -1,10 +1,164 @@
 "use client";
 
-import { use } from "react";
+import { use, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AuthForm } from "@/components/auth/auth-form";
 import { SiteHeader } from "@/components/layout/site-header";
+import { authenticateAction } from "@/app/auth/actions";
+import type { Locale } from "@/lib/i18n";
 import { getMessages, normalizeLocale } from "@/lib/i18n";
+import { editableRuleDeltaSchema } from "@/lib/validation/radar-rules";
+import type { EditableRuleDelta } from "@/types/contracts";
+import { z } from "zod";
+
+export const RULE_FLOW_STORAGE_KEY = "watch-anything.rule-flow";
+
+const ruleFlowStorageSchema = z
+  .object({
+    originalPrompt: z.string().trim().min(1).max(4_000),
+    ruleToken: z.string().min(1).max(8_192).optional(),
+    editableDelta: editableRuleDeltaSchema.optional(),
+  })
+  .strict();
+
+export type RuleFlowStorage = {
+  originalPrompt: string;
+  ruleToken?: string;
+  editableDelta?: EditableRuleDelta;
+};
+
+function getLocalStorage(storage?: Storage): Storage | null {
+  if (storage) {
+    return storage;
+  }
+
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return window.localStorage;
+}
+
+export function readRuleFlowStorage(storage?: Storage): RuleFlowStorage | null {
+  const localStorage = getLocalStorage(storage);
+
+  if (!localStorage) {
+    return null;
+  }
+
+  try {
+    const raw = localStorage.getItem(RULE_FLOW_STORAGE_KEY);
+
+    if (!raw) {
+      return null;
+    }
+
+    const result = ruleFlowStorageSchema.safeParse(JSON.parse(raw));
+
+    if (!result.success) {
+      return null;
+    }
+
+    return result.data as RuleFlowStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function writeRuleFlowStorage(
+  flow: RuleFlowStorage,
+  storage?: Storage,
+): void {
+  const localStorage = getLocalStorage(storage);
+
+  if (!localStorage) {
+    return;
+  }
+
+  const safeFlow = {
+    originalPrompt: flow.originalPrompt,
+    ...(flow.ruleToken ? { ruleToken: flow.ruleToken } : {}),
+    ...(flow.editableDelta
+      ? { editableDelta: editableRuleDeltaSchema.parse(flow.editableDelta) }
+      : {}),
+  };
+
+  const result = ruleFlowStorageSchema.safeParse(safeFlow);
+
+  if (result.success) {
+    localStorage.setItem(RULE_FLOW_STORAGE_KEY, JSON.stringify(result.data));
+  }
+}
+
+export function clearRuleFlowStorage(storage?: Storage): void {
+  getLocalStorage(storage)?.removeItem(RULE_FLOW_STORAGE_KEY);
+}
+
+export function formatRuleFlowError(error: unknown, locale: Locale): string {
+  if (error === "EXPIRED_RULE_TOKEN") {
+    return locale === "zh-CN"
+      ? "规则已过期，请重新整理。"
+      : "These rules expired. Please prepare them again.";
+  }
+
+  if (error === "INVALID_RULE_TOKEN" || error === "INVALID_RULE_DELTA") {
+    return locale === "zh-CN"
+      ? "规则验证失败，请重新整理。"
+      : "The rules could not be verified. Please prepare them again.";
+  }
+
+  if (error === "AUTH_REQUIRED") {
+    return locale === "zh-CN" ? "请先登录。" : "Please log in first.";
+  }
+
+  return locale === "zh-CN"
+    ? "暂时无法继续，请稍后重试。"
+    : "We could not continue right now. Please try again.";
+}
+
+export type PendingSetupResult =
+  | { ok: true; next: "connect-telegram" | "radar"; radarId?: string }
+  | { ok: false; error: string };
+
+export async function submitPendingSetup(
+  flow: RuleFlowStorage,
+  fetcher: typeof fetch = fetch,
+): Promise<PendingSetupResult> {
+  try {
+    const response = await fetcher("/api/pending-setups", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        originalPrompt: flow.originalPrompt,
+        ruleToken: flow.ruleToken,
+        editableDelta: flow.editableDelta,
+      }),
+    });
+    const body = (await response.json()) as {
+      error?: string;
+      next?: string;
+      radarId?: string;
+    };
+
+    if (!response.ok) {
+      return { ok: false, error: body.error ?? "PENDING_SETUP_FAILED" };
+    }
+
+    if (body.next === "radar" && body.radarId) {
+      clearRuleFlowStorage();
+      return { ok: true, next: "radar", radarId: body.radarId };
+    }
+
+    if (body.next !== "connect-telegram") {
+      return { ok: false, error: "PENDING_SETUP_FAILED" };
+    }
+
+    clearRuleFlowStorage();
+    return { ok: true, next: "connect-telegram" };
+  } catch {
+    return { ok: false, error: "PENDING_SETUP_FAILED" };
+  }
+}
 
 export default function AuthPage({
   searchParams,
@@ -18,6 +172,52 @@ export default function AuthPage({
   const copy = getMessages(locale);
   const initialMode = mode === "signup" ? "signup" : "login";
   const router = useRouter();
+  const [error, setError] = useState<string | null>(null);
+
+  const handleAuthenticate = async (payload: {
+    mode: "login" | "signup";
+    fullName: string;
+    email: string;
+    password: string;
+  }) => {
+    setError(null);
+    const ruleFlow = readRuleFlowStorage();
+    let result;
+
+    try {
+      result = await authenticateAction({
+        ...payload,
+        next: ruleFlow?.ruleToken && ruleFlow.editableDelta ? "connect-telegram" : params.next,
+      });
+    } catch {
+      setError(formatRuleFlowError("AUTHENTICATION_FAILED", locale));
+      return;
+    }
+
+    if (!result.ok) {
+      setError(formatRuleFlowError(result.error, locale));
+      return;
+    }
+
+    if (result.next === "/connect-telegram" && ruleFlow?.ruleToken && ruleFlow.editableDelta) {
+      const pendingResult = await submitPendingSetup(ruleFlow);
+
+      if (!pendingResult.ok) {
+        setError(formatRuleFlowError(pendingResult.error, locale));
+        return;
+      }
+
+      if (pendingResult.next === "radar" && pendingResult.radarId) {
+        router.push(`/radars/${pendingResult.radarId}`);
+        return;
+      }
+
+      router.push(`/connect-telegram?lang=${locale}`);
+      return;
+    }
+
+    router.push(`${result.next}?lang=${locale}`);
+  };
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950">
@@ -46,9 +246,8 @@ export default function AuthPage({
           <AuthForm
             locale={locale}
             initialMode={initialMode}
-            onAuthenticate={() => {
-              router.push(`/connect-telegram?lang=${locale}`);
-            }}
+            error={error ?? undefined}
+            onAuthenticate={handleAuthenticate}
           />
         </div>
       </div>

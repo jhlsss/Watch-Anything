@@ -1,17 +1,39 @@
+"use client";
+
 import { Hero } from "@/components/landing/hero";
 import { SiteHeader } from "@/components/layout/site-header";
 import { getMessages, normalizeLocale } from "@/lib/i18n";
 import { Activity, ArrowUpRight } from "lucide-react";
 import Link from "next/link";
+import { use } from "react";
 
-export default async function Home({
+const RULE_FLOW_STORAGE_KEY = "watch-anything.rule-flow";
+
+export default function Home({
   searchParams,
 }: {
-  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const params = await searchParams;
-  const locale = normalizeLocale(Array.isArray(params?.lang) ? params?.lang[0] : params?.lang);
+  const params = use(searchParams);
+  const rawLocale = Array.isArray(params.lang) ? params.lang[0] : params.lang;
+  const locale = normalizeLocale(rawLocale);
   const copy = getMessages(locale);
+
+  const saveOriginalPrompt = (prompt: string) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!prompt) {
+      window.localStorage.removeItem(RULE_FLOW_STORAGE_KEY);
+      return;
+    }
+
+    window.localStorage.setItem(
+      RULE_FLOW_STORAGE_KEY,
+      JSON.stringify({ originalPrompt: prompt }),
+    );
+  };
 
   return (
     <main className="min-h-screen min-w-0 overflow-x-hidden bg-slate-50 text-slate-950">
@@ -39,6 +61,7 @@ export default async function Home({
             primaryCta={copy.landing.primaryCta}
             helper={copy.landing.helper}
             examples={copy.landing.examples}
+            onParseRequest={saveOriginalPrompt}
           />
         </div>
       </div>
