@@ -817,7 +817,10 @@ class MonitoringFakeClient implements MonitoringClient {
     args: Record<string, unknown> = {},
   ): Promise<DatabaseResult> {
     this.rpcCalls.push(functionName);
-    if (functionName === "claim_radar_run") {
+    if (
+      functionName === "claim_radar_run" ||
+      functionName === "claim_radar_run_for_mvp_bypass"
+    ) {
       if (
         this.existingNotificationStatus === "sending" &&
         this.existingNotificationExpiredSending
@@ -959,7 +962,8 @@ class MonitoringFakeClient implements MonitoringClient {
             importance_score: Number(args.p_importance_score ?? 0),
             first_seen_during_baseline: !Boolean(args.p_source_was_baselined),
             notification_eligible:
-              Boolean(args.p_source_was_baselined) && Boolean(args.p_relevant),
+              Boolean(args.p_relevant) &&
+              Number(args.p_importance_score ?? 0) >= this.radarRules.importanceThreshold,
           },
         ],
         error: null,
@@ -1082,9 +1086,17 @@ describe("run pipeline", () => {
     expect(fetchRss).not.toHaveBeenCalled();
   });
 
-  it("does not create a notification for a candidate first seen during baseline", async () => {
+  it("creates a notification for an eligible candidate first seen during baseline", async () => {
     const client = new MonitoringFakeClient();
-    const createNotification = vi.fn();
+    const createNotification = vi.fn().mockResolvedValue({
+      id: "notification-1",
+      status: "pending",
+    });
+    const sendNotification = vi.fn().mockResolvedValue({
+      notificationId: "notification-1",
+      status: "sent",
+      messageId: 1,
+    });
 
     await runRadar("radar-1", "baseline", {
       client,
@@ -1105,9 +1117,23 @@ describe("run pipeline", () => {
         },
       ],
       createNotification,
+      sendNotification,
     });
 
-    expect(createNotification).not.toHaveBeenCalled();
+    expect(createNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the MVP bypass claim RPC when manual limits are bypassed", async () => {
+    const client = new MonitoringFakeClient();
+
+    await runRadar("radar-1", "manual", {
+      client,
+      bypassManualLimits: true,
+      searchTavily: async () => [],
+      fetchRss: async () => [],
+    });
+
+    expect(client.rpcCalls[0]).toBe("claim_radar_run_for_mvp_bypass");
   });
 
   it("keeps different fingerprints as separate findings even when event_key matches", async () => {
