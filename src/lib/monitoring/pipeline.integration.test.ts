@@ -249,11 +249,11 @@ type PipelineRow = Record<string, unknown>;
 
 const pipelineRules: RadarRules = {
   radarName: "LISA Radar",
-  subject: "LISA",
-  aliases: [],
-  includeTopics: ["official news"],
+  subject: "Track official LISA music news",
+  aliases: ["LISA"],
+  includeTopics: ["official music news"],
   excludeTopics: [],
-  searchQuery: "LISA official news",
+  searchQuery: "LISA official music news",
   importanceThreshold: 70,
   intervalMinutes: 360,
 };
@@ -555,9 +555,17 @@ describe("Task 7 monitoring pipeline", () => {
       id: "radar-2",
       name: "OpenAI Radar",
       original_prompt: "Track OpenAI official news",
-      rules: { ...pipelineRules, radarName: "OpenAI Radar", subject: "OpenAI" },
+      rules: {
+        ...pipelineRules,
+        radarName: "OpenAI Radar",
+        subject: "Track official OpenAI product releases and model updates",
+        aliases: ["OpenAI"],
+        includeTopics: ["product releases", "model updates"],
+        searchQuery: "OpenAI product release model update",
+      },
     });
     const createdNotifications: string[] = [];
+    const fetchRss = vi.fn(async () => [] as Candidate[]);
     const evaluate = async ({ candidates }: { candidates: Candidate[] }) =>
       candidates.map((item) => ({
         candidate: item,
@@ -574,7 +582,7 @@ describe("Task 7 monitoring pipeline", () => {
     const runDependencies = (items: Candidate[]) => ({
       client,
       searchTavily: async () => items,
-      fetchRss: async () => [],
+      fetchRss,
       evaluate,
       createNotification: async (findingId: string, destinationId: string) => {
         const finding = client.findings.get(findingId);
@@ -631,5 +639,6 @@ describe("Task 7 monitoring pipeline", () => {
     expect(
       [...client.findings.values()].filter((finding) => finding.radar_id === "radar-2"),
     ).toHaveLength(1);
+    expect(fetchRss).toHaveBeenCalledTimes(2);
   });
 });

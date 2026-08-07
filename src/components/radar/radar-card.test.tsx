@@ -225,6 +225,27 @@ describe("RadarCard", () => {
     );
   });
 
+  it("does not present findings that have no relevance or importance score", () => {
+    render(
+      <FindingsList
+        findings={[
+          {
+            ...finding,
+            id: "music-news-evaluation-failed",
+            sourceDomain: "www.music-news.com",
+            relevanceScore: 0,
+            importanceScore: 0,
+            matchReason: "evaluation_failed",
+          },
+        ]}
+        locale="en"
+      />,
+    );
+
+    expect(screen.queryByText("www.music-news.com")).not.toBeInTheDocument();
+    expect(screen.getByText("No important findings yet")).toBeInTheDocument();
+  });
+
   it("renders only the three public run states", () => {
     render(<RunHistory runs={runs} locale="en" />);
 

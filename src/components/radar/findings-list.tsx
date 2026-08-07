@@ -85,7 +85,9 @@ export function FindingsList({
   limit?: number;
 }) {
   const labels = copy[locale];
-  const visibleFindings = typeof limit === "number" ? findings.slice(0, limit) : findings;
+  const visibleFindings = findings
+    .filter((finding) => finding.relevanceScore > 0 && finding.importanceScore > 0)
+    .slice(0, limit);
 
   if (visibleFindings.length === 0) {
     return (

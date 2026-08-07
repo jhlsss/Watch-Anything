@@ -611,11 +611,11 @@ describe("deadline cancellation", () => {
 
 const testRules: RadarRules = {
   radarName: "Task 5 Radar",
-  subject: "Task 5",
+  subject: "Track Task 5 music updates",
   aliases: [],
-  includeTopics: ["test"],
+  includeTopics: ["music updates"],
   excludeTopics: [],
-  searchQuery: "Task 5",
+  searchQuery: "Task 5 music updates",
   importanceThreshold: 50,
   intervalMinutes: 360,
 };
@@ -650,6 +650,7 @@ class MonitoringFakeClient implements MonitoringClient {
   readonly rpcCalls: string[] = [];
   readonly findingInserts: Record<string, unknown>[] = [];
   readonly terminalRunUpdates: Record<string, unknown>[] = [];
+  radarRules: RadarRules = testRules;
   runStatus: "running" | "success" | "failed" = "running";
   sourceUpdateRows = true;
   terminalRunUpdateRows = true;
@@ -709,6 +710,7 @@ class MonitoringFakeClient implements MonitoringClient {
         return {
           data: {
             ...testRadar,
+            rules: this.radarRules,
             tavily_baseline_completed_at: this.tavilyBaselineCompletedAt,
           },
           error: null,
@@ -1017,6 +1019,30 @@ class MonitoringFakeClient implements MonitoringClient {
 }
 
 describe("run pipeline", () => {
+  it("does not fetch the fixed Music News feed for an OpenAI radar", async () => {
+    const client = new MonitoringFakeClient();
+    client.radarRules = {
+      ...testRules,
+      radarName: "OpenAI Product and Model Updates",
+      subject: "Track official OpenAI product releases and model updates.",
+      aliases: ["OpenAI"],
+      includeTopics: ["product releases", "model updates"],
+      searchQuery: "OpenAI product release model update",
+    };
+    const fetchRss = vi.fn<() => Promise<Candidate[]>>(async () => []);
+
+    await expect(
+      runRadar("radar-1", "baseline", {
+        client,
+        searchTavily: async () => [testCandidate],
+        fetchRss,
+        evaluate: async () => [],
+      }),
+    ).resolves.toMatchObject({ status: "success", candidateCount: 1 });
+
+    expect(fetchRss).not.toHaveBeenCalled();
+  });
+
   it("claims once and reuses the claimed run for baseline execution", async () => {
     const client = new MonitoringFakeClient();
 
