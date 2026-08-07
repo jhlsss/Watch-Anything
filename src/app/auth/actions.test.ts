@@ -375,6 +375,8 @@ describe("pending setup idempotency", () => {
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
       gt: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
       maybeSingle,
       insert,
     };
@@ -390,6 +392,36 @@ describe("pending setup idempotency", () => {
         expiresAt: "2099-01-02T00:00:00.000Z",
       }),
     ).resolves.toEqual({ id: "setup-1" });
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("reuses a consumed setup and its Radar on an activation retry", async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: { id: "setup-consumed", status: "consumed", radar_id: "radar-1" },
+      error: null,
+    });
+    const insert = vi.fn();
+    const query = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      gt: vi.fn().mockReturnThis(),
+      maybeSingle,
+      insert,
+    };
+    const admin = { from: vi.fn().mockReturnValue(query) };
+
+    await expect(
+      getOrCreatePendingSetup({
+        admin: admin as never,
+        userId: "user-1",
+        originalPrompt: "Track LISA releases",
+        rules: validRules,
+        ruleTokenHash: "token-hash",
+        expiresAt: "2099-01-02T00:00:00.000Z",
+      }),
+    ).resolves.toEqual({ id: "setup-consumed", radarId: "radar-1" });
     expect(insert).not.toHaveBeenCalled();
   });
 });

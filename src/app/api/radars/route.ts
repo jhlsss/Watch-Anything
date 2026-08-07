@@ -112,6 +112,51 @@ export async function POST(request: Request) {
     createAdminClient() as unknown as Parameters<typeof getMonitoringClient>[0],
   );
 
+  const setupState = await db
+    .from("pending_radar_setups")
+    .select("status,radar_id")
+    .eq("id", parsed.data.setupId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (setupState.error) {
+    return NextResponse.json({ error: "SETUP_LOOKUP_FAILED" }, { status: 503 });
+  }
+
+  const consumedRadarId =
+    setupState.data &&
+    typeof setupState.data === "object" &&
+    "status" in setupState.data &&
+    setupState.data.status === "consumed" &&
+    "radar_id" in setupState.data &&
+    typeof setupState.data.radar_id === "string"
+      ? setupState.data.radar_id
+      : null;
+
+  if (consumedRadarId) {
+    const existingRadar = await db
+      .from("radars")
+      .select(
+        "id,user_id,name,original_prompt,rules,status,interval_minutes,baseline_cutoff_at,last_checked_at,next_check_at,created_at,updated_at",
+      )
+      .eq("id", consumedRadarId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (existingRadar.error || !existingRadar.data) {
+      return NextResponse.json({ error: "RADAR_NOT_FOUND" }, { status: 500 });
+    }
+
+    cookieStore.delete("wa_setup");
+    return NextResponse.json(
+      {
+        radar: toPublicRadar(existingRadar.data as Record<string, unknown>),
+        run: null,
+      },
+      { status: 200 },
+    );
+  }
+
   let createdRadar: Awaited<ReturnType<typeof createRadarFromSetup>> | null = null;
   try {
     createdRadar = await withMonitoringDeadline(

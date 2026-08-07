@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -468,6 +468,32 @@ describe("monitoring migration contract", () => {
     );
     expect(createRouteSource).toMatch(
       /createRadarFromSetup\([\s\S]*outerDeadlineAt,\s*db,\s*signal/u,
+    );
+  });
+
+  it("persists the created Radar so setup activation retries are idempotent", () => {
+    const migrationDirectory = resolve(process.cwd(), "supabase/migrations");
+    const idempotencyMigration = readdirSync(migrationDirectory)
+      .filter((file) => file.endsWith(".sql"))
+      .sort()
+      .map((file) => readFileSync(resolve(migrationDirectory, file), "utf8"))
+      .find((source) => {
+        const normalized = source.toLowerCase();
+        return normalized.includes("alter table public.pending_radar_setups") &&
+          normalized.includes("add column if not exists radar_id uuid");
+      })
+      ?.replace(/--.*$/gm, "")
+      .replace(/\s+/g, " ")
+      .toLowerCase() ?? "";
+
+    expect(idempotencyMigration).toMatch(
+      /alter table public\.pending_radar_setups add column if not exists radar_id uuid/,
+    );
+    expect(idempotencyMigration).toMatch(
+      /if setup_row\.status = 'consumed'[\s\S]*if setup_row\.radar_id is null[\s\S]*return radar_row/,
+    );
+    expect(idempotencyMigration).toMatch(
+      /update public\.pending_radar_setups[\s\S]*set status = 'consumed', radar_id = radar_row\.id/,
     );
   });
 });

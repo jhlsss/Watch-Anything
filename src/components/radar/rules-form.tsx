@@ -14,7 +14,7 @@ interface RulesFormProps {
   originalRequest?: string;
   backHref?: string;
   onSubmit?: (rules: RadarRules) => void;
-  onConfirmRules?: (rules: RadarRules) => void;
+  onConfirmRules?: (rules: RadarRules) => void | Promise<void>;
 }
 
 export function RulesForm({
@@ -33,6 +33,7 @@ export function RulesForm({
   const [showExcludeInput, setShowExcludeInput] = useState(false);
   const [radarNameError, setRadarNameError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const payload = useMemo(() => {
     const includeTopics = newIncludeTopic.trim()
@@ -77,8 +78,13 @@ export function RulesForm({
     setFormError(null);
   };
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (isSubmitting) {
+      return;
+    }
+
     const result = radarRulesSchema.safeParse(payload);
 
     if (!result.success) {
@@ -90,8 +96,14 @@ export function RulesForm({
 
     setRadarNameError(null);
     setFormError(null);
-    onSubmit?.(result.data);
-    onConfirmRules?.(result.data);
+    setIsSubmitting(true);
+
+    try {
+      onSubmit?.(result.data);
+      await onConfirmRules?.(result.data);
+    } finally {
+      setIsSubmitting(false);
+    }
     setForm(result.data);
     setNewIncludeTopic("");
     setNewExcludeTopic("");
@@ -261,7 +273,11 @@ export function RulesForm({
             >
               {copy.backToHome}
             </Link>
-            <Button type="submit" className="min-h-10 rounded-xl bg-violet-600 px-4 text-xs font-semibold text-white hover:bg-violet-500">
+            <Button
+              type="submit"
+              disabled={isSubmitting}
+              className="min-h-10 rounded-xl bg-violet-600 px-4 text-xs font-semibold text-white hover:bg-violet-500"
+            >
               {copy.confirm}
             </Button>
           </div>
