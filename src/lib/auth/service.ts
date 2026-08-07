@@ -18,6 +18,12 @@ type PasswordAuthClient = {
   };
 };
 
+type SignOutClient = {
+  auth: {
+    signOut(): Promise<{ error: AuthResponse["error"] }>;
+  };
+};
+
 type AdminAuthClient = {
   auth: {
     admin: {
@@ -79,6 +85,10 @@ async function resolveClient(client?: PasswordAuthClient) {
   return client ?? (await createClient());
 }
 
+async function resolveSignOutClient(client?: SignOutClient) {
+  return client ?? (await createClient());
+}
+
 async function resolveAdminClient(client?: AdminAuthClient): Promise<AdminAuthClient> {
   if (client) {
     return client;
@@ -132,4 +142,11 @@ export async function signUpWithPassword(
     ...signInResult,
     next: resolveSafeNext(input.next),
   };
+}
+
+export async function signOut(
+  client?: SignOutClient,
+): Promise<{ error: AuthResponse["error"] }> {
+  const supabase = await resolveSignOutClient(client);
+  return supabase.auth.signOut();
 }
