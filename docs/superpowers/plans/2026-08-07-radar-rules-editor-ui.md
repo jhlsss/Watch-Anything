@@ -21,8 +21,8 @@
 **Files:**
 - Create: `src/components/radar/radar-rules-card.test.tsx`
 
-- [ ] **Step 1: Add failing tests** for the default rule summary, in-card `编辑规则/Edit rules` entry, opening the editor with current values, validation errors, save payload/success, save failure retention, and cancel without a request.
-- [ ] **Step 2: Run `pnpm exec vitest run src/components/radar/radar-rules-card.test.tsx`** and confirm failure is caused by the missing in-card editor behavior.
+- [x] **Step 1: Add failing tests** for the default rule summary, in-card `编辑规则/Edit rules` entry, opening the editor with current values, validation errors, save payload/success, save failure retention, and cancel without a request.
+- [x] **Step 2: Run `pnpm exec vitest run src/components/radar/radar-rules-card.test.tsx`** and confirm failure is caused by the missing in-card editor behavior.
 
 ### Task 2: Move rule editing into the rules card
 
@@ -31,23 +31,23 @@
 - Create: `src/components/radar/radar-rules-card.tsx`
 - Modify: `src/app/radars/[id]/page.tsx`
 
-- [ ] **Step 1: Create `RadarRulesCard` with props for locale, `radarId`, `rules`, and the localized summary labels; it owns editing state, initializes from the provided rules, and renders summary vs edit mode.
-- [ ] **Step 2: Move the existing validation and PATCH payload into `RadarRulesCard`, preserving `update_rules`, `radarName`, `includeTopics`, and `excludeTopics`.
-- [ ] **Step 3: Remove the top-level edit button, edit state, and inline form** from `RadarActions`; keep only pause/resume and check-now actions there.
-- [ ] **Step 4: Add `RadarRulesCard` to the detail page's sticky rules aside and pass the existing `rules` values plus localized summary labels.
-- [ ] **Step 5: Reuse the existing PATCH request, validation, loading state, error handling, and router refresh behavior.** Successful saves close the editor; failed saves keep it open.
-- [ ] **Step 6: Keep the rules card responsive** with 40px-plus controls and wrapped action buttons on narrow screens.
-- [ ] **Step 7: Run `pnpm exec vitest run src/components/radar/radar-rules-card.test.tsx src/components/radar/radar-card.test.tsx`** and confirm all editor and detail tests pass.
+- [x] **Step 1: Create `RadarRulesCard` with props for locale, `radarId`, `rules`, and the localized summary labels; it owns editing state, initializes from the provided rules, and renders summary vs edit mode.
+- [x] **Step 2: Move the existing validation and PATCH payload into `RadarRulesCard`, preserving `update_rules`, `radarName`, `includeTopics`, and `excludeTopics`.
+- [x] **Step 3: Remove the top-level edit button, edit state, and inline form** from `RadarActions`; keep only pause/resume and check-now actions there.
+- [x] **Step 4: Add `RadarRulesCard` to the detail page's sticky rules aside and pass the existing `rules` values plus localized summary labels.
+- [x] **Step 5: Reuse the existing PATCH request, validation, loading state, error handling, and router refresh behavior.** Successful saves close the editor; failed saves keep it open.
+- [x] **Step 6: Keep the rules card responsive** with 40px-plus controls and wrapped action buttons on narrow screens.
+- [x] **Step 7: Run `pnpm exec vitest run src/components/radar/radar-rules-card.test.tsx src/components/radar/radar-card.test.tsx`** and confirm all editor and detail tests pass.
 
 ### Task 3: Full verification and commit
 
 **Files:**
 - No additional source files unless verification exposes a regression.
 
-- [ ] **Step 1: Run `pnpm test` and confirm all test files pass.**
-- [ ] **Step 2: Run `pnpm lint` and `pnpm build`.**
-- [ ] **Step 3: Run `git diff --check` and inspect the final diff for unrelated changes.**
-- [ ] **Step 4: Commit the implementation on `main`:**
+- [x] **Step 1: Run `pnpm exec vitest run --exclude '.worktrees/**'` and confirm all project test files pass.**
+- [x] **Step 2: Run `pnpm exec eslint --ignore-pattern '.worktrees/**'` and `pnpm build`.**
+- [x] **Step 3: Run `git diff --check` and inspect the final diff for unrelated changes.**
+- [x] **Step 4: Commit the implementation on `main`:**
 
 ```bash
 git add src docs/superpowers/plans/2026-08-07-radar-rules-editor-ui.md

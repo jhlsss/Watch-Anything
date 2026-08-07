@@ -5,6 +5,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { FindingsList, type FindingsListFinding } from "@/components/radar/findings-list";
 import { RadarActions, WorkspaceLocaleSwitcher, WorkspaceNavigation } from "@/components/radar/radar-actions";
+import { RadarRulesCard } from "@/components/radar/radar-rules-card";
 import { RunHistory, type RunHistoryRun } from "@/components/radar/run-history";
 import { normalizeLocale, type Locale } from "@/lib/i18n";
 import { createClient } from "@/lib/supabase/server";
@@ -82,7 +83,19 @@ const copy = {
     candidates: "Candidates",
     relevant: "Relevant",
     notified: "Notified",
-    rulesTitle: "Monitoring rules",
+    title: "Monitoring rules",
+    edit: "Edit rules",
+    save: "Save rules",
+    cancel: "Cancel",
+    saving: "Saving…",
+    radarName: "Radar name",
+    include: "Include topics",
+    exclude: "Exclude topics",
+    includeHint: "One topic per line",
+    validationName: "Radar name must be 2–80 characters.",
+    validationInclude: "Include 1–8 topics, with each topic 1–60 characters.",
+    validationExclude: "Exclude up to 8 topics, with each topic 1–60 characters.",
+    actionError: "The rules could not be saved. Please try again.",
     notifyAbout: "Notify about",
     ignore: "Ignore",
     subject: "Subject",
@@ -120,7 +133,19 @@ const copy = {
     candidates: "候选结果",
     relevant: "相关结果",
     notified: "已通知",
-    rulesTitle: "监控规则",
+    title: "监控规则",
+    edit: "编辑规则",
+    save: "保存规则",
+    cancel: "取消",
+    saving: "保存中…",
+    radarName: "Radar 名称",
+    include: "关注项",
+    exclude: "排除项",
+    includeHint: "每行填写一项",
+    validationName: "Radar 名称需为 2–80 个字符。",
+    validationInclude: "关注项需为 1–8 项，每项 1–60 个字符。",
+    validationExclude: "排除项最多 8 项，每项 1–60 个字符。",
+    actionError: "规则保存失败，请稍后重试。",
     notifyAbout: "关注内容",
     ignore: "忽略",
     subject: "监控主题",
@@ -392,11 +417,6 @@ export default async function RadarDetailPage({ params, searchParams }: { params
                 radarId={radar.id}
                 status={radar.status}
                 locale={locale}
-                rules={{
-                  radarName: radar.name,
-                  includeTopics: rules.includeTopics,
-                  excludeTopics: rules.excludeTopics,
-                }}
               />
             </div>
           </header>
@@ -448,32 +468,13 @@ export default async function RadarDetailPage({ params, searchParams }: { params
             </div>
 
             <aside className="min-w-0 space-y-4 self-start min-[850px]:sticky min-[850px]:top-6">
-              <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-                <h2 className="text-lg font-semibold text-slate-950">{labels.rulesTitle}</h2>
-                <div className="mt-5 grid gap-5">
-                  <div>
-                    <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-slate-500">{labels.notifyAbout}</p>
-                    {rules.includeTopics.length > 0 ? (
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {rules.includeTopics.map((topic) => <span key={topic} className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">{topic}</span>)}
-                      </div>
-                    ) : <p className="mt-2 text-sm text-slate-600">{labels.emptyRules}</p>}
-                  </div>
-                  <div>
-                    <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-slate-500">{labels.ignore}</p>
-                    <p className="mt-2 break-words text-sm leading-6 text-slate-700">{rules.excludeTopics.length > 0 ? rules.excludeTopics.join(locale === "zh-CN" ? "、" : ", ") : "—"}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-slate-500">{labels.subject}</p>
-                    <p className="mt-2 break-words text-sm leading-6 text-slate-700">{rules.subject}</p>
-                  </div>
-                  <div className="grid gap-3 border-t border-slate-100 pt-4 text-sm">
-                    <div className="flex items-start justify-between gap-3"><span className="text-slate-500">{labels.searchQuery}</span><span className="max-w-[60%] break-words text-right font-semibold text-slate-900">{rules.searchQuery || "—"}</span></div>
-                    <div className="flex items-center justify-between gap-3"><span className="text-slate-500">{labels.frequency}</span><span className="font-semibold text-slate-900">{labels.everyHours(hours)}</span></div>
-                    <div className="flex items-center justify-between gap-3"><span className="text-slate-500">{labels.threshold}</span><span className="font-semibold text-slate-900">{rules.importanceThreshold} / 100</span></div>
-                  </div>
-                </div>
-              </section>
+              <RadarRulesCard
+                radarId={radar.id}
+                locale={locale}
+                rules={rules}
+                labels={labels}
+                nextCheckLabel={nextCheckLabel}
+              />
 
               <section className="rounded-3xl border border-violet-100 bg-violet-50 p-4 sm:p-5">
                 <div className="flex items-start gap-3">

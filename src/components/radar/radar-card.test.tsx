@@ -264,11 +264,6 @@ describe("RadarCard", () => {
         radarId={lisaRadar.id}
         status="active"
         locale="en"
-        rules={{
-          radarName: lisaRadar.name,
-          includeTopics: lisaRadar.includeTopics,
-          excludeTopics: ["Fan speculation"],
-        }}
       />,
     );
 
@@ -297,7 +292,6 @@ describe("RadarCard", () => {
         radarId={openAiRadar.id}
         status="paused"
         locale="zh-CN"
-        rules={{ radarName: openAiRadar.name, includeTopics: openAiRadar.includeTopics, excludeTopics: [] }}
       />,
     );
 
@@ -320,7 +314,6 @@ describe("RadarCard", () => {
         radarId={lisaRadar.id}
         status="active"
         locale="en"
-        rules={{ radarName: lisaRadar.name, includeTopics: lisaRadar.includeTopics, excludeTopics: [] }}
       />,
     );
 
@@ -329,115 +322,6 @@ describe("RadarCard", () => {
     await waitFor(() => {
       expect(screen.getByRole("alert")).toHaveTextContent("This Radar cannot be resumed while three Radars are active.");
     });
-  });
-
-  it("keeps the edit form open when the rules PATCH fails", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) });
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(
-      <RadarActions
-        radarId={lisaRadar.id}
-        status="active"
-        locale="en"
-        rules={{ radarName: lisaRadar.name, includeTopics: lisaRadar.includeTopics, excludeTopics: [] }}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Edit rules" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save rules" }));
-
-    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
-  });
-
-  it("sends only editable rule fields through update_rules", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(
-      <RadarActions
-        radarId={lisaRadar.id}
-        status="active"
-        locale="en"
-        rules={{ radarName: lisaRadar.name, includeTopics: lisaRadar.includeTopics, excludeTopics: [] }}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Edit rules" }));
-    fireEvent.change(screen.getByLabelText("Radar name"), { target: { value: "LISA Updates" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save rules" }));
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        `/api/radars/${lisaRadar.id}`,
-        expect.objectContaining({
-          method: "PATCH",
-          body: JSON.stringify({
-            action: "update_rules",
-            radarName: "LISA Updates",
-            includeTopics: lisaRadar.includeTopics,
-            excludeTopics: [],
-          }),
-        }),
-      );
-    });
-  });
-
-  it("blocks invalid rule values before making an update request", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(
-      <RadarActions
-        radarId={lisaRadar.id}
-        status="active"
-        locale="en"
-        rules={{ radarName: lisaRadar.name, includeTopics: lisaRadar.includeTopics, excludeTopics: [] }}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Edit rules" }));
-    fireEvent.change(screen.getByLabelText("Radar name"), { target: { value: "a" } });
-    const textboxes = screen.getAllByRole("textbox");
-    fireEvent.change(textboxes[1], { target: { value: "" } });
-    fireEvent.change(textboxes[2], {
-      target: { value: `${"x".repeat(61)}\n${Array.from({ length: 8 }, (_, index) => `topic-${index + 1}`).join("\n")}` },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save rules" }));
-
-    expect(screen.getByText("Radar name must be 2–80 characters.")).toBeInTheDocument();
-    expect(screen.getByText("Include 1–8 topics, with each topic 1–60 characters.")).toBeInTheDocument();
-    expect(screen.getByText("Exclude up to 8 topics, with each topic 1–60 characters.")).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("rejects rule values above the server limits", () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(
-      <RadarActions
-        radarId={lisaRadar.id}
-        status="active"
-        locale="zh-CN"
-        rules={{ radarName: lisaRadar.name, includeTopics: lisaRadar.includeTopics, excludeTopics: [] }}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "编辑规则" }));
-    fireEvent.change(screen.getByLabelText("Radar 名称"), { target: { value: "x".repeat(81) } });
-    const textboxes = screen.getAllByRole("textbox");
-    fireEvent.change(textboxes[1], {
-      target: { value: Array.from({ length: 9 }, (_, index) => `topic-${index + 1}`).join("\n") },
-    });
-    fireEvent.change(textboxes[2], { target: { value: "topic-1\n".repeat(9) } });
-    fireEvent.click(screen.getByRole("button", { name: "保存规则" }));
-
-    expect(screen.getByText("Radar 名称需为 2–80 个字符。")).toBeInTheDocument();
-    expect(screen.getByText("关注项需为 1–8 项，每项 1–60 个字符。")).toBeInTheDocument();
-    expect(screen.getByText("排除项最多 8 项，每项 1–60 个字符。")).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("does not write a locale cookie when the profile update fails", async () => {
@@ -513,6 +397,7 @@ describe("RadarCard", () => {
     render(page as ReactElement);
 
     expect(screen.getByText("相关 2 / 候选 4")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "编辑规则" })).toBeInTheDocument();
   });
 
   it("shows a readable data error instead of 404 when the radar query fails", async () => {
