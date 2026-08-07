@@ -58,6 +58,47 @@ describe("monitoring migration contract", () => {
     );
   });
 
+  it("qualifies the MVP monitoring RPC columns in its forward migration", () => {
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "supabase/migrations/202608070008_fix_mvp_monitoring_rpc_ambiguity.sql",
+      ),
+      "utf8",
+    )
+      .replace(/--.*$/gm, "")
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+
+    expect(migration).toContain("update public.radar_runs as run_update");
+    expect(migration).toContain("run_update.lease_owner = claimed.lease_owner");
+    expect(migration).toContain("run_update.radar_id = radar_id_for_run");
+    expect(migration).not.toMatch(
+      /set lease_expires_at = lease_expires_at\s+where id = p_run_id/u,
+    );
+    expect(migration).not.toMatch(
+      /and lease_owner = p_lease_owner\s+and lease_expires_at/u,
+    );
+  });
+
+  it("uses the run-findings constraint in the follow-up migration", () => {
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "supabase/migrations/202608070009_fix_mvp_persist_finding_conflict.sql",
+      ),
+      "utf8",
+    )
+      .replace(/--.*$/gm, "")
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+
+    expect(migration).toContain(
+      "on conflict on constraint run_findings_pkey do update",
+    );
+    expect(migration).not.toContain("on conflict (run_id, finding_id)");
+  });
+
   it("uses fixed search paths and service-role-only RPC execution", () => {
     const migration = readFileSync(
       resolve(
