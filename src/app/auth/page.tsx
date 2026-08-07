@@ -43,6 +43,12 @@ export function formatRuleFlowError(error: unknown, locale: Locale): string {
     return locale === "zh-CN" ? "请先登录。" : "Please log in first.";
   }
 
+  if (error === "ACTIVE_RADAR_LIMIT_REACHED") {
+    return locale === "zh-CN"
+      ? "最多创建 3 个启用中的 Radar；请先在工作区暂停一个。"
+      : "You already have the maximum of 3 active Radars. Pause one in your workspace before creating another.";
+  }
+
   return locale === "zh-CN"
     ? "暂时无法继续，请稍后重试。"
     : "We could not continue right now. Please try again.";
@@ -96,6 +102,11 @@ export default function AuthPage({
       const pendingResult = await submitPendingSetup(ruleFlow);
 
       if (!pendingResult.ok) {
+        if (pendingResult.error === "ACTIVE_RADAR_LIMIT_REACHED") {
+          router.push(`/dashboard?lang=${locale}&notice=radar-limit`);
+          return;
+        }
+
         setError(formatRuleFlowError(pendingResult.error, locale));
         return;
       }

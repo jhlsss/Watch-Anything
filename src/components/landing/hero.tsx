@@ -29,6 +29,7 @@ interface HeroProps {
   request?: string;
   onRequestChange?: (request: string) => void;
   onParseRequest?: (request: string) => void;
+  capacityReached?: boolean;
 }
 
 function renderHeadline(title: string, locale: Locale) {
@@ -67,10 +68,12 @@ export function Hero({
   request: controlledRequest,
   onRequestChange,
   onParseRequest,
+  capacityReached = false,
 }: HeroProps) {
   const router = useRouter();
   const [uncontrolledRequest, setUncontrolledRequest] = useState("");
   const [requestError, setRequestError] = useState(false);
+  const [capacityError, setCapacityError] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
   const parseTimerRef = useRef<number | null>(null);
   const request = controlledRequest ?? uncontrolledRequest;
@@ -105,7 +108,14 @@ export function Hero({
       return;
     }
 
+    if (capacityReached) {
+      setRequestError(false);
+      setCapacityError(true);
+      return;
+    }
+
     setRequestError(false);
+    setCapacityError(false);
     setIsParsing(true);
     onParseRequest?.(request.trim());
     parseTimerRef.current = window.setTimeout(() => {
@@ -143,6 +153,7 @@ export function Hero({
                 if (event.target.value.trim()) {
                   setRequestError(false);
                 }
+                setCapacityError(false);
               }}
               onKeyDown={(event) => {
                 if (event.key !== "Enter") {
@@ -173,6 +184,13 @@ export function Hero({
               <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
               {copy.heroUnderstanding}
             </p>
+          ) : capacityError ? (
+            <p id="hero-capacity-error" role="alert" className="mt-3 text-sm font-medium text-rose-600">
+              {copy.capacityReached} {" "}
+              <Link href={`/dashboard?lang=${locale}`} className="font-semibold underline underline-offset-2">
+                {copy.openWorkspace}
+              </Link>
+            </p>
           ) : requestError ? (
             <p id="hero-request-error" role="alert" className="mt-3 text-sm font-medium text-rose-600">
               {copy.requestRequired}
@@ -190,6 +208,7 @@ export function Hero({
                 onClick={() => {
                   setRequest(example);
                   setRequestError(false);
+                  setCapacityError(false);
                 }}
                 className="min-h-11 rounded-full border border-slate-200 bg-white px-3 py-2.5 text-xs font-medium text-slate-600 transition hover:border-violet-200 hover:text-violet-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2"
               >

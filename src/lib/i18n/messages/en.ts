@@ -30,6 +30,8 @@ const en = {
     heroUnderstanding: "AI is turning that into clear monitoring rules…",
     finalInputPlaceholder: "Describe what matters to you",
     requestRequired: "Tell us what you would like to monitor.",
+    capacityReached: "You already have the maximum of 3 active Radars. Pause one in your workspace before creating another.",
+    openWorkspace: "Open workspace",
     examples: ["LISA official updates", "OpenAI releases", "Hong Kong teaching jobs"],
     proofEyebrow: "Proof, not promises",
     proofTitle: "See exactly what your Radar is doing.",

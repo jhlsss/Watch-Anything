@@ -71,6 +71,8 @@ const copy = {
     healthyDescription: "Your Radars are ready for their next check.",
     telegramAttention: "Telegram is not connected",
     telegramAttentionDescription: "Connect Telegram to receive important findings.",
+    radarLimitAttention: "Radar limit reached",
+    radarLimitAttentionDescription: "Pause one active Radar before creating another.",
     failedAttention: (name: string) => `${name} needs a retry`,
     failedAttentionDescription: "The latest check failed. Open the Radar to try again.",
     dataAttention: "Workspace data needs attention",
@@ -106,6 +108,8 @@ const copy = {
     healthyDescription: "你的 Radar 已准备好进行下一次检查。",
     telegramAttention: "Telegram 尚未连接",
     telegramAttentionDescription: "连接 Telegram 后才能收到重要发现。",
+    radarLimitAttention: "已达到 Radar 数量上限",
+    radarLimitAttentionDescription: "请先暂停一个启用中的 Radar，再创建新的 Radar。",
     failedAttention: (name: string) => `${name} 需要重试`,
     failedAttentionDescription: "最近一次检查失败，请打开 Radar 重试。",
     dataAttention: "工作区数据需要处理",
@@ -247,6 +251,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   });
 
   const attentionItems = [] as Array<{ title: string; description: string; href: string }>;
+  if (firstParam(params.notice) === "radar-limit") {
+    attentionItems.push({
+      title: labels.radarLimitAttention,
+      description: labels.radarLimitAttentionDescription,
+      href: localize("/radars"),
+    });
+  }
   if (!connection) {
     attentionItems.push({
       title: labels.telegramAttention,

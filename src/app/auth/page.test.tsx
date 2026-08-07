@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import AuthPage from "@/app/auth/page";
+import AuthPage, { formatRuleFlowError } from "@/app/auth/page";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
@@ -13,6 +13,15 @@ function fulfilledSearchParams(value: Record<string, string>) {
 }
 
 describe("AuthPage", () => {
+  it("explains the Radar limit instead of showing a generic authentication error", () => {
+    expect(formatRuleFlowError("ACTIVE_RADAR_LIMIT_REACHED", "en")).toContain(
+      "maximum of 3 active Radars",
+    );
+    expect(formatRuleFlowError("ACTIVE_RADAR_LIMIT_REACHED", "zh-CN")).toContain(
+      "最多创建 3 个启用中的 Radar",
+    );
+  });
+
   it("uses signup copy when the signup mode is selected", async () => {
     render(
       <AuthPage
