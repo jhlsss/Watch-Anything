@@ -5,7 +5,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { FindingsList, type FindingsListFinding } from "@/components/radar/findings-list";
 import { RadarActions, WorkspaceLocaleSwitcher, WorkspaceNavigation } from "@/components/radar/radar-actions";
-import { RadarRulesCard } from "@/components/radar/radar-rules-card";
+import { RadarRulesCard, type RadarRulesCardLabels } from "@/components/radar/radar-rules-card";
 import { RunHistory, type RunHistoryRun } from "@/components/radar/run-history";
 import { normalizeLocale, type Locale } from "@/lib/i18n";
 import { createClient } from "@/lib/supabase/server";
@@ -376,6 +376,30 @@ export default async function RadarDetailPage({ params, searchParams }: { params
     : radar.next_check_at
       ? formatDate(radar.next_check_at, locale)
       : labels.noCheck;
+  const radarRulesCardLabels: RadarRulesCardLabels = {
+    title: labels.title,
+    edit: labels.edit,
+    save: labels.save,
+    cancel: labels.cancel,
+    saving: labels.saving,
+    radarName: labels.radarName,
+    include: labels.include,
+    exclude: labels.exclude,
+    includeHint: labels.includeHint,
+    notifyAbout: labels.notifyAbout,
+    ignore: labels.ignore,
+    subject: labels.subject,
+    searchQuery: labels.searchQuery,
+    frequency: labels.frequency,
+    threshold: labels.threshold,
+    nextCheck: labels.nextCheck,
+    emptyRules: labels.emptyRules,
+    everyHoursLabel: labels.everyHours(hours),
+    validationName: labels.validationName,
+    validationInclude: labels.validationInclude,
+    validationExclude: labels.validationExclude,
+    actionError: labels.actionError,
+  };
 
   return (
     <div className="flex min-h-screen min-w-0 bg-slate-50 text-slate-950">
@@ -472,7 +496,7 @@ export default async function RadarDetailPage({ params, searchParams }: { params
                 radarId={radar.id}
                 locale={locale}
                 rules={rules}
-                labels={labels}
+                labels={radarRulesCardLabels}
                 nextCheckLabel={nextCheckLabel}
               />
 

@@ -31,7 +31,7 @@ const labels: RadarRulesCardLabels = {
   threshold: "Threshold",
   nextCheck: "Next check",
   emptyRules: "No topics configured",
-  everyHours: (hours) => `Every ${hours} hours`,
+  everyHoursLabel: "Every 6 hours",
   includeHint: "One topic per line",
   validationName: "Radar name must be 2–80 characters.",
   validationInclude: "Include 1–8 topics, with each topic 1–60 characters.",
@@ -79,6 +79,7 @@ describe("RadarRulesCard", () => {
     expect(screen.getByRole("button", { name: "Edit rules" })).not.toBeNull();
     expect(screen.getByText("Product launches")).not.toBeNull();
     expect(screen.getByText("Rumors")).not.toBeNull();
+    expect(screen.getByText("Every 6 hours")).not.toBeNull();
     expect(screen.getByText("In 5h 52m")).not.toBeNull();
   });
 
@@ -99,6 +100,7 @@ describe("RadarRulesCard", () => {
           include: "关注项",
           exclude: "排除项",
           includeHint: "每行填写一项",
+          everyHoursLabel: "每 6 小时",
           nextCheck: "下次检查",
         }}
         nextCheckLabel="5 小时 52 分钟后"

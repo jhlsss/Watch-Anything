@@ -34,7 +34,7 @@ export type RadarRulesCardLabels = {
   threshold: string;
   nextCheck: string;
   emptyRules: string;
-  everyHours: (hours: number) => string;
+  everyHoursLabel: string;
   validationName: string;
   validationInclude: string;
   validationExclude: string;
@@ -244,7 +244,7 @@ export function RadarRulesCard({
           </div>
           <div className="grid gap-3 border-t border-slate-100 pt-4 text-sm">
             <div className="flex items-start justify-between gap-3"><span className="text-slate-500">{labels.searchQuery}</span><span className="max-w-[60%] break-words text-right font-semibold text-slate-900">{rules.searchQuery || "—"}</span></div>
-            <div className="flex items-center justify-between gap-3"><span className="text-slate-500">{labels.frequency}</span><span className="font-semibold text-slate-900">{labels.everyHours(Math.max(1, Math.round(rules.intervalMinutes / 60)))}</span></div>
+            <div className="flex items-center justify-between gap-3"><span className="text-slate-500">{labels.frequency}</span><span className="font-semibold text-slate-900">{labels.everyHoursLabel}</span></div>
             <div className="flex items-center justify-between gap-3"><span className="text-slate-500">{labels.nextCheck}</span><span className="max-w-[60%] text-right font-semibold text-slate-900">{nextCheckLabel}</span></div>
             <div className="flex items-center justify-between gap-3"><span className="text-slate-500">{labels.threshold}</span><span className="font-semibold text-slate-900">{rules.importanceThreshold} / 100</span></div>
           </div>
