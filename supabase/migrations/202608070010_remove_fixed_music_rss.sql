@@ -167,6 +167,16 @@ delete from public.findings as finding
  where finding.source_type = 'rss'
    and finding.source_domain in ('music-news.com', 'www.music-news.com');
 
+alter table public.findings
+  drop constraint if exists findings_no_fixed_music_news_rss;
+
+alter table public.findings
+  add constraint findings_no_fixed_music_news_rss
+  check (
+    source_type <> 'rss'
+    or lower(source_domain) not in ('music-news.com', 'www.music-news.com')
+  );
+
 delete from public.radar_sources as source
  where source.source_key = 'music_news_rss';
 

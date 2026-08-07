@@ -46,6 +46,9 @@ describe("monitoring migration contract", () => {
     expect(migration).toContain(
       "delete from public.radar_sources as source where source.source_key = 'music_news_rss'",
     );
+    expect(migration).toContain(
+      "add constraint findings_no_fixed_music_news_rss check ( source_type <> 'rss' or lower(source_domain) not in ('music-news.com', 'www.music-news.com') )",
+    );
   });
 
   it("allows eligible baseline findings to notify and restricts the MVP bypass RPC", () => {

@@ -426,6 +426,30 @@ describe("RadarCard", () => {
     expect(gtMock).toHaveBeenNthCalledWith(2, "importance_score", 0);
   });
 
+  it("filters Dashboard findings by positive scores before applying the row limit", async () => {
+    const findingQuery = makeQuery({ data: [], error: null });
+    const gtMock = vi.fn<(column: string, value: number) => QueryBuilder>(
+      () => findingQuery,
+    );
+    findingQuery.gt = gtMock;
+    const fromMock = vi
+      .fn()
+      .mockImplementationOnce(() => makeQuery({ data: { locale: "en" }, error: null }))
+      .mockImplementationOnce(() => makeQuery({ data: null, error: null }))
+      .mockImplementationOnce(() => makeQuery({
+        data: [{ id: lisaRadar.id, name: lisaRadar.name, status: "active" }],
+        error: null,
+      }))
+      .mockImplementationOnce(() => findingQuery)
+      .mockImplementationOnce(() => makeQuery({ data: [], error: null }));
+    setServerClient(fromMock);
+
+    await DashboardPage({ searchParams: Promise.resolve({ lang: "en" }) });
+
+    expect(gtMock).toHaveBeenNthCalledWith(1, "relevance_score", 0);
+    expect(gtMock).toHaveBeenNthCalledWith(2, "importance_score", 0);
+  });
+
   it("shows a readable data error instead of 404 when the radar query fails", async () => {
     const fromMock = vi
       .fn()
