@@ -29,6 +29,7 @@ import {
 import { fingerprintCandidate } from "@/lib/monitoring/fingerprint";
 import { resolveRunStatus } from "@/lib/monitoring/run-status";
 import { fetchMusicNewsRss } from "@/lib/sources/music-news-rss";
+import { shouldFetchMusicNewsRss } from "@/lib/monitoring/source-selection";
 import { searchTavily } from "@/lib/sources/tavily";
 import type {
   Candidate,
@@ -976,13 +977,17 @@ export async function executeClaimedRun(
           sourceOutcomes,
           internalErrors,
         ),
-        fetchSource(
-          "rss",
-          rssFetcher,
-          persistOutcomes,
-          sourceOutcomes,
-          internalErrors,
-        ),
+        ...(shouldFetchMusicNewsRss(radar.rules)
+          ? [
+              fetchSource(
+                "rss" as const,
+                rssFetcher,
+                persistOutcomes,
+                sourceOutcomes,
+                internalErrors,
+              ),
+            ]
+          : [Promise.resolve([] as Candidate[])]),
       ]),
       deadlineAt,
     );
