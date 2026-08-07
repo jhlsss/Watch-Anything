@@ -28,6 +28,7 @@ export default function Home({
   const [ctaRequestError, setCtaRequestError] = useState(false);
   const [currentHash, setCurrentHash] = useState("");
   const [accountEmail, setAccountEmail] = useState<string | null>(null);
+  const [activeRadarLimitReached, setActiveRadarLimitReached] = useState(false);
 
   useEffect(() => {
     document.documentElement.lang = locale;
@@ -39,12 +40,39 @@ export default function Home({
     try {
       const supabase = createClient();
       void supabase.auth.getUser().then(({ data: { user } }) => {
-        if (active) {
-          setAccountEmail(user?.email ?? null);
+        if (!active) {
+          return;
         }
+
+        setAccountEmail(user?.email ?? null);
+        setActiveRadarLimitReached(false);
+
+        if (!user) {
+          return;
+        }
+
+        void fetch("/api/radars")
+          .then(async (response) => {
+            if (!response.ok) {
+              return;
+            }
+
+            const body = (await response.json()) as {
+              radars?: Array<{ status?: string }>;
+            };
+            const activeCount = (body.radars ?? []).filter((radar) => radar.status === "active").length;
+
+            if (active) {
+              setActiveRadarLimitReached(activeCount >= 3);
+            }
+          })
+          .catch(() => {
+            // The API remains authoritative; fail open if the advisory check is unavailable.
+          });
       }).catch(() => {
         if (active) {
           setAccountEmail(null);
+          setActiveRadarLimitReached(false);
         }
       });
     } catch {
@@ -140,6 +168,7 @@ export default function Home({
             request={heroRequest}
             onRequestChange={setHeroRequest}
             onParseRequest={saveOriginalPrompt}
+            capacityReached={activeRadarLimitReached}
           />
         </div>
       </div>

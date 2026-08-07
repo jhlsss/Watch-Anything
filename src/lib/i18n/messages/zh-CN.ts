@@ -30,6 +30,8 @@ const zhCN = {
     heroUnderstanding: "AI 正在把它整理成清晰的监控规则…",
     finalInputPlaceholder: "描述你关心的事情",
     requestRequired: "请先填写你想持续关注的内容。",
+    capacityReached: "你已有最多 3 个启用中的 Radar，请先在工作区暂停一个，再创建新的 Radar。",
+    openWorkspace: "打开工作区",
     examples: ["LISA 官方动态", "OpenAI 发布动态", "香港教师职位"],
     proofEyebrow: "不是承诺，而是可见证据",
     proofTitle: "清楚看到你的 Radar 在做什么。",

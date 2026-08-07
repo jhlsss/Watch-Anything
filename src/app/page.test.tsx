@@ -13,6 +13,7 @@ vi.mock("next/navigation", () => ({
 afterEach(() => {
   cleanup();
   createBrowserClientMock.mockReset();
+  vi.unstubAllGlobals();
   document.documentElement.lang = "en";
   window.history.replaceState(null, "", "/");
 });
@@ -34,6 +35,40 @@ beforeEach(() => {
 });
 
 describe("Landing templates", () => {
+  it("warns a signed-in user at the active Radar limit before starting rule generation", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        radars: [
+          { id: "radar-1", status: "active" },
+          { id: "radar-2", status: "active" },
+          { id: "radar-3", status: "active" },
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    createBrowserClientMock.mockReturnValue({
+      auth: {
+        getUser: vi.fn().mockResolvedValue({ data: { user: { email: "qa@example.com" } } }),
+      },
+    });
+
+    render(<Home searchParams={fulfilledSearchParams as never} />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/radars"));
+    fireEvent.change(screen.getAllByRole("textbox")[0], {
+      target: { value: "Track OpenAI releases" },
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Build my radar" }));
+
+    expect(screen.getByRole("alert").textContent).toContain(
+      "You already have the maximum of 3 active Radars",
+    );
+    expect(
+      within(screen.getByRole("alert")).getByRole("link", { name: "Open workspace" }).getAttribute("href"),
+    ).toBe("/dashboard?lang=en");
+  });
+
   it("shows the signed-in account and workspace link on the homepage", async () => {
     createBrowserClientMock.mockReturnValue({
       auth: {
