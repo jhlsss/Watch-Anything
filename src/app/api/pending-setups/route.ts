@@ -93,6 +93,29 @@ async function findActivePendingSetup(
   return data;
 }
 
+async function findConsumedPendingSetup(
+  admin: PendingSetupAdmin,
+  userId: string,
+  ruleTokenHash: string,
+) {
+  const { data, error } = await admin
+    .from("pending_radar_setups")
+    .select("id, status, radar_id")
+    .eq("user_id", userId)
+    .eq("rule_token_hash", ruleTokenHash)
+    .eq("status", "consumed")
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Consumed pending setup lookup failed.", error);
+    throw new Error("PENDING_SETUP_LOOKUP_FAILED");
+  }
+
+  return data;
+}
+
 export async function getOrCreatePendingSetup({
   admin,
   userId,
@@ -100,7 +123,13 @@ export async function getOrCreatePendingSetup({
   rules,
   ruleTokenHash,
   expiresAt,
-}: PendingSetupInput): Promise<{ id: string }> {
+}: PendingSetupInput): Promise<{ id: string; radarId?: string }> {
+  const consumed = await findConsumedPendingSetup(admin, userId, ruleTokenHash);
+
+  if (consumed?.radar_id) {
+    return { id: consumed.id, radarId: consumed.radar_id };
+  }
+
   const existing = await findActivePendingSetup(admin, userId, ruleTokenHash);
 
   if (existing) {
@@ -186,7 +215,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const expiresAt = new Date(Date.now() + SETUP_MAX_AGE * 1_000).toISOString();
   const admin = createAdminClient();
-  let setup: { id: string };
+  let setup: { id: string; radarId?: string };
 
   try {
     setup = await getOrCreatePendingSetup({
@@ -204,6 +233,35 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     console.error("Pending setup creation failed.", error);
     return NextResponse.json({ error: "PENDING_SETUP_FAILED" }, { status: 500 });
+  }
+
+  if (setup.radarId) {
+    const existingRadar = await admin
+      .from("radars")
+      .select(
+        "id,user_id,name,original_prompt,rules,status,interval_minutes,baseline_cutoff_at,last_checked_at,next_check_at,created_at,updated_at",
+      )
+      .eq("id", setup.radarId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (existingRadar.error || !existingRadar.data) {
+      console.error("Consumed setup Radar lookup failed.", existingRadar.error);
+      return NextResponse.json({ error: "RADAR_NOT_FOUND" }, { status: 500 });
+    }
+
+    const cookieStore = await cookies();
+    cookieStore.delete(SETUP_COOKIE);
+
+    return NextResponse.json(
+      {
+        next: "radar",
+        radarId: setup.radarId,
+        radar: toPublicRadar(existingRadar.data as Record<string, unknown>),
+        run: null,
+      },
+      { status: 200 },
+    );
   }
 
   const connection = await admin

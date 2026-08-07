@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RulesForm } from "@/components/radar/rules-form";
 import type { RadarRules } from "@/types/contracts";
@@ -82,5 +82,25 @@ describe("RulesForm", () => {
     expect(onConfirmRules).not.toHaveBeenCalled();
     expect(radarName.getAttribute("aria-invalid")).toBe("true");
     expect(screen.getByRole("alert").textContent).toContain("at least 2 characters");
+  });
+
+  it("ignores a second confirmation while the first creation is pending", async () => {
+    let resolveConfirmation: (() => void) | undefined;
+    const pendingConfirmation = new Promise<void>((resolve) => {
+      resolveConfirmation = resolve;
+    });
+    const onConfirmRules = vi.fn(() => pendingConfirmation);
+
+    render(<RulesForm initialRules={rules} locale="en" onConfirmRules={onConfirmRules} />);
+
+    const confirmButton = screen.getByRole("button", { name: "Confirm rules" });
+    fireEvent.click(confirmButton);
+    fireEvent.click(confirmButton);
+
+    expect(onConfirmRules).toHaveBeenCalledTimes(1);
+    expect((confirmButton as HTMLButtonElement).disabled).toBe(true);
+
+    resolveConfirmation?.();
+    await waitFor(() => expect((confirmButton as HTMLButtonElement).disabled).toBe(false));
   });
 });
