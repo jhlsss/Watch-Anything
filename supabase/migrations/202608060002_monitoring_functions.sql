@@ -660,14 +660,14 @@ begin
     raise exception 'RUN_NOT_CLAIMED';
   end if;
 
-  update public.radar_runs
-     set lease_expires_at = lease_expires_at
-   where id = p_run_id
-     and radar_id = radar_id_for_run
-     and status = 'running'
-     and lease_owner = p_lease_owner
-     and lease_expires_at > clock_timestamp()
-  returning id into lease_cas_id;
+  update public.radar_runs as run_update
+     set lease_expires_at = run_update.lease_expires_at
+   where run_update.id = p_run_id
+     and run_update.radar_id = radar_id_for_run
+     and run_update.status = 'running'
+     and run_update.lease_owner = p_lease_owner
+     and run_update.lease_expires_at > clock_timestamp()
+  returning run_update.id into lease_cas_id;
 
   if lease_cas_id is null then
     raise exception 'RUN_NOT_CLAIMED';
@@ -683,14 +683,14 @@ begin
    for update;
   finding_found := found;
 
-  update public.radar_runs
-     set lease_expires_at = lease_expires_at
-   where id = p_run_id
-     and radar_id = radar_id_for_run
-     and status = 'running'
-     and lease_owner = p_lease_owner
-     and lease_expires_at > clock_timestamp()
-  returning id into lease_cas_id;
+  update public.radar_runs as run_update
+     set lease_expires_at = run_update.lease_expires_at
+   where run_update.id = p_run_id
+     and run_update.radar_id = radar_id_for_run
+     and run_update.status = 'running'
+     and run_update.lease_owner = p_lease_owner
+     and run_update.lease_expires_at > clock_timestamp()
+  returning run_update.id into lease_cas_id;
 
   if lease_cas_id is null then
     raise exception 'RUN_NOT_CLAIMED';
@@ -759,14 +759,14 @@ begin
     returning * into finding_row;
   end if;
 
-  update public.radar_runs
-     set lease_expires_at = lease_expires_at
-   where id = p_run_id
-     and radar_id = radar_id_for_run
-     and status = 'running'
-     and lease_owner = p_lease_owner
-     and lease_expires_at > clock_timestamp()
-  returning id into lease_cas_id;
+  update public.radar_runs as run_update
+     set lease_expires_at = run_update.lease_expires_at
+   where run_update.id = p_run_id
+     and run_update.radar_id = radar_id_for_run
+     and run_update.status = 'running'
+     and run_update.lease_owner = p_lease_owner
+     and run_update.lease_expires_at > clock_timestamp()
+  returning run_update.id into lease_cas_id;
 
   if lease_cas_id is null then
     raise exception 'RUN_NOT_CLAIMED';
@@ -792,7 +792,7 @@ begin
     case when p_relevant then 'relevant' else 'not_relevant' end,
     p_match_reason
   )
-  on conflict (run_id, finding_id) do update
+  on conflict on constraint run_findings_pkey do update
     set relevant = excluded.relevant,
         relevance_score = excluded.relevance_score,
         confidence = excluded.confidence,

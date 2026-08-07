@@ -12,6 +12,59 @@ function firstRow<T>(data: unknown): T | null {
 }
 
 describe("monitoring migration contract", () => {
+  it("qualifies radar_id in persist_run_finding lease updates", () => {
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "supabase/migrations/202608060002_monitoring_functions.sql",
+      ),
+      "utf8",
+    )
+      .replace(/--.*$/gm, "")
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+    const functionStart = migration.indexOf(
+      "create or replace function public.persist_run_finding",
+    );
+    const functionBody = migration.slice(functionStart, migration.indexOf("$$;", functionStart));
+
+    expect(functionBody).toContain(
+      "update public.radar_runs as run_update set lease_expires_at = run_update.lease_expires_at where run_update.id = p_run_id and run_update.radar_id = radar_id_for_run",
+    );
+    expect(functionBody).not.toMatch(/where id = p_run_id and radar_id = radar_id_for_run/);
+    expect(functionBody).toContain(
+      "on conflict on constraint run_findings_pkey do update",
+    );
+    expect(functionBody).not.toContain("on conflict (run_id, finding_id) do update");
+  });
+
+  it("ships a production correction migration for persist_run_finding", () => {
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "supabase/migrations/202608070003_fix_persist_run_finding_radar_id.sql",
+      ),
+      "utf8",
+    )
+      .replace(/--.*$/gm, "")
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+
+    expect(migration).toContain(
+      "create or replace function public.persist_run_finding",
+    );
+    expect(migration).toContain(
+      "run_update.radar_id = radar_id_for_run",
+    );
+    expect(migration).not.toMatch(/where id = p_run_id and radar_id = radar_id_for_run/);
+    expect(migration).toContain(
+      "on conflict on constraint run_findings_pkey do update",
+    );
+    expect(migration).toContain(
+      "grant execute on function public.persist_run_finding",
+    );
+  });
+
   it("uses fixed search paths and service-role-only RPC execution", () => {
     const migration = readFileSync(
       resolve(
@@ -132,7 +185,7 @@ describe("monitoring migration contract", () => {
       expect(functionBody).toContain("clock_timestamp()");
       expect(functionBody).not.toContain("lease_expires_at > now()");
       expect(functionBody).toMatch(
-        /update public\.radar_runs .*where id = p_run_id .*status = 'running'.*lease_owner = p_lease_owner.*lease_expires_at > clock_timestamp\(\).*returning id into/,
+        /update public\.radar_runs(?: as run_update)? .*where (?:run_update\.)?id = p_run_id .*(?:run_update\.)?status = 'running'.*(?:run_update\.)?lease_owner = p_lease_owner.*(?:run_update\.)?lease_expires_at > clock_timestamp\(\).*returning (?:run_update\.)?id into/,
       );
     }
 
