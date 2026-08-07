@@ -7,7 +7,7 @@ import {
   submitPendingSetup,
   writeRuleFlowStorage,
 } from "@/app/auth/page";
-import { authenticateAction } from "@/app/auth/actions";
+import { authenticateAction, logoutAction } from "@/app/auth/actions";
 import { POST as parseRulesPost } from "@/app/api/rules/parse/route";
 import { getOrCreatePendingSetup } from "@/app/api/pending-setups/route";
 import { hasImmutableRuleChanges } from "@/app/rules/page";
@@ -20,12 +20,14 @@ const {
   parseRulesMock,
   signInMock,
   createUserMock,
+  signOutMock,
 } = vi.hoisted(() => ({
   createAdminClientMock: vi.fn(),
   createServerClientMock: vi.fn(),
   parseRulesMock: vi.fn(),
   signInMock: vi.fn(),
   createUserMock: vi.fn(),
+  signOutMock: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -205,6 +207,51 @@ describe("authenticateAction", () => {
     });
 
     expect(readRuleFlowStorage()).toEqual(flow);
+  });
+});
+
+describe("logoutAction", () => {
+  beforeEach(() => {
+    signOutMock.mockReset();
+    createServerClientMock.mockReset();
+    createServerClientMock.mockReturnValue({
+      auth: { signOut: signOutMock },
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns success after the server Supabase client signs out", async () => {
+    signOutMock.mockResolvedValue({ error: null });
+
+    await expect(logoutAction()).resolves.toEqual({ ok: true });
+    expect(signOutMock).toHaveBeenCalledOnce();
+  });
+
+  it("maps a Supabase sign-out error to a stable action error", async () => {
+    const providerError = { message: "Sign out unavailable" };
+    signOutMock.mockResolvedValue({ error: providerError });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(logoutAction()).resolves.toEqual({
+      ok: false,
+      error: "SIGN_OUT_FAILED",
+    });
+    expect(consoleError).toHaveBeenCalledWith("Logout failed.", providerError);
+  });
+
+  it("maps an unexpected sign-out exception to a stable action error", async () => {
+    const exception = new Error("network unavailable");
+    signOutMock.mockRejectedValue(exception);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(logoutAction()).resolves.toEqual({
+      ok: false,
+      error: "SIGN_OUT_FAILED",
+    });
+    expect(consoleError).toHaveBeenCalledWith("Logout failed.", exception);
   });
 });
 

@@ -3,6 +3,7 @@
 import {
   resolveSafeNext,
   signInWithPassword,
+  signOut,
   signUpWithPassword,
 } from "@/lib/auth/service";
 import { authSchema } from "@/lib/validation/auth";
@@ -23,6 +24,10 @@ export type AuthenticateActionResult =
       ok: false;
       error: "INVALID_INPUT" | "AUTHENTICATION_FAILED";
     };
+
+export type LogoutActionResult =
+  | { ok: true }
+  | { ok: false; error: "SIGN_OUT_FAILED" };
 
 function normalizeInput(
   input: AuthenticateActionInput,
@@ -126,5 +131,21 @@ export async function authenticateAction(
   } catch (error) {
     console.error("Authentication failed.", error);
     return { ok: false, error: "AUTHENTICATION_FAILED" };
+  }
+}
+
+export async function logoutAction(): Promise<LogoutActionResult> {
+  try {
+    const result = await signOut();
+
+    if (result.error) {
+      console.error("Logout failed.", result.error);
+      return { ok: false, error: "SIGN_OUT_FAILED" };
+    }
+
+    return { ok: true };
+  } catch (error) {
+    console.error("Logout failed.", error);
+    return { ok: false, error: "SIGN_OUT_FAILED" };
   }
 }
