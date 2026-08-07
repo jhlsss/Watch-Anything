@@ -92,8 +92,11 @@ describe("Telegram webhook", () => {
       }),
     );
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "TOKEN_ALREADY_USED" });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      error: "TOKEN_ALREADY_USED",
+    });
     expect(sendMessage).toHaveBeenCalledWith({
       chatId: 987654,
       text: expect.not.stringContaining("raw-token"),

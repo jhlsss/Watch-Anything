@@ -119,10 +119,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       chatId,
       "This binding link is invalid or expired. Please create a new link in Watch Anything.",
     );
-    return NextResponse.json(
-      { error: errorCode },
-      { status: 400 },
-    );
+    return NextResponse.json({ ok: true, error: errorCode });
   }
 
   await sendBotMessage(
