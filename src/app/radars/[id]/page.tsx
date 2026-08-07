@@ -308,6 +308,8 @@ export default async function RadarDetailPage({ params, searchParams }: { params
       .from("findings")
       .select("id,radar_id,title,summary,source_domain,source_url,published_at,first_seen_at,relevance_score,importance_score,match_reason,notification_eligible")
       .eq("radar_id", radar.id)
+      .gt("relevance_score", 0)
+      .gt("importance_score", 0)
       .order("first_seen_at", { ascending: false })
       .limit(20),
     supabase

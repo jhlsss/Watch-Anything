@@ -639,6 +639,6 @@ describe("Task 7 monitoring pipeline", () => {
     expect(
       [...client.findings.values()].filter((finding) => finding.radar_id === "radar-2"),
     ).toHaveLength(1);
-    expect(fetchRss).toHaveBeenCalledTimes(2);
+    expect(fetchRss).not.toHaveBeenCalled();
   });
 });

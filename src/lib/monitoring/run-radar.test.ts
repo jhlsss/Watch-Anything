@@ -1031,7 +1031,8 @@ describe("run pipeline", () => {
       subject: "Track official OpenAI product releases and model updates.",
       aliases: ["OpenAI"],
       includeTopics: ["product releases", "model updates"],
-      searchQuery: "OpenAI product release model update",
+      searchQuery:
+        "site:openai.com/blog OR site:openai.com/news (GPT OR ChatGPT OR API OR Model) -career -jobs -hiring -music",
     };
     const fetchRss = vi.fn<() => Promise<Candidate[]>>(async () => []);
 
@@ -1061,8 +1062,6 @@ describe("run pipeline", () => {
     expect(client.rpcCalls).toEqual([
       "claim_radar_run",
       "persist_run_source_outcomes",
-      "persist_run_source_outcomes",
-      "mark_source_baseline_for_run",
       "mark_source_baseline_for_run",
       "requeue_failed_notifications_for_run",
       "finalize_run_for_owner",

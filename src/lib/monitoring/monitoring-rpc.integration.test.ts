@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -12,6 +12,42 @@ function firstRow<T>(data: unknown): T | null {
 }
 
 describe("monitoring migration contract", () => {
+  it("removes the fixed Music News source with a forward migration", () => {
+    const migrationPath = resolve(
+      process.cwd(),
+      "supabase/migrations/202608070010_remove_fixed_music_rss.sql",
+    );
+
+    expect(existsSync(migrationPath)).toBe(true);
+    if (!existsSync(migrationPath)) {
+      return;
+    }
+
+    const migration = readFileSync(migrationPath, "utf8")
+      .replace(/--.*$/gm, "")
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+    const setupStart = migration.indexOf(
+      "create or replace function public.create_radar_from_setup",
+    );
+    const setupBody = migration.slice(
+      setupStart,
+      migration.indexOf("$$;", setupStart),
+    );
+
+    expect(setupStart).toBeGreaterThanOrEqual(0);
+    expect(setupBody).toContain(
+      "jsonb_build_object( 'tavily', jsonb_build_object('baselinecompletedat', null) )",
+    );
+    expect(setupBody).not.toContain("insert into public.radar_sources");
+    expect(migration).toContain(
+      "delete from public.findings as finding where finding.source_type = 'rss' and finding.source_domain in ('music-news.com', 'www.music-news.com')",
+    );
+    expect(migration).toContain(
+      "delete from public.radar_sources as source where source.source_key = 'music_news_rss'",
+    );
+  });
+
   it("allows eligible baseline findings to notify and restricts the MVP bypass RPC", () => {
     const migration = readFileSync(
       resolve(

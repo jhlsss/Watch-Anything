@@ -28,8 +28,6 @@ import {
 } from "@/lib/monitoring/create-radar";
 import { fingerprintCandidate } from "@/lib/monitoring/fingerprint";
 import { resolveRunStatus } from "@/lib/monitoring/run-status";
-import { fetchMusicNewsRss } from "@/lib/sources/music-news-rss";
-import { shouldFetchMusicNewsRss } from "@/lib/monitoring/source-selection";
 import { searchTavily } from "@/lib/sources/tavily";
 import type {
   Candidate,
@@ -111,7 +109,6 @@ export type RunRadarDependencies = {
 
 type SourceBaselineState = {
   tavily: boolean;
-  music_news_rss: boolean;
 };
 
 type EvaluationData = {
@@ -452,26 +449,8 @@ async function retryTerminalWrite<T>(
   throw lastError;
 }
 
-function isSourceBaselineComplete(
-  radar: PipelineRadar,
-  source: keyof SourceBaselineState,
-  sourceRow: Record<string, unknown> | null,
-): boolean {
-  if (source === "tavily") {
-    return Boolean(radar.tavily_baseline_completed_at);
-  }
-
-  if (sourceRow && typeof sourceRow.baseline_completed_at === "string") {
-    return true;
-  }
-
-  const sourceState = radar.source_state?.[source];
-  return Boolean(
-    sourceState &&
-      typeof sourceState === "object" &&
-      "baselineCompletedAt" in sourceState &&
-      sourceState.baselineCompletedAt,
-  );
+function isTavilyBaselineComplete(radar: PipelineRadar): boolean {
+  return Boolean(radar.tavily_baseline_completed_at);
 }
 
 async function readRadar(
@@ -540,25 +519,6 @@ async function readRun(
   }
 
   return run;
-}
-
-async function readSourceRow(
-  client: MonitoringClient,
-  radarId: string,
-): Promise<Record<string, unknown> | null> {
-  const result = await client
-    .from("radar_sources")
-    .select("source_key,baseline_completed_at,last_error")
-    .eq("radar_id", radarId)
-    .eq("source_key", "music_news_rss")
-    .maybeSingle();
-
-  if (result.error?.code === "42P01") {
-    return null;
-  }
-
-  throwDatabaseError(result.error);
-  return (result.data as Record<string, unknown> | null) ?? null;
 }
 
 async function persistSourceOutcomes(
@@ -722,19 +682,6 @@ async function markSourceBaselineComplete(
     }
   }
 
-  if (successfulSources.has("rss")) {
-    assertRunDeadline(deadlineAt);
-    const result = await client.rpc("mark_source_baseline_for_run", {
-      p_run_id: run.id,
-      p_lease_owner: leaseOwner,
-      p_source_key: "music_news_rss",
-      p_completed_at: now.toISOString(),
-    });
-    throwRunRpcError(result.error);
-    if (!rpcReturnedTrue(result.data)) {
-      throw new MonitoringError("RUN_NOT_CLAIMED", "Run is no longer claimed.");
-    }
-  }
 }
 
 async function readTelegramDestination(
@@ -949,17 +896,12 @@ export async function executeClaimedRun(
   try {
     assertRunDeadline(deadlineAt);
     radar = await withRunDeadline(readRadar(db, run.radar_id), deadlineAt);
-    const sourceRow = await withRunDeadline(
-      readSourceRow(db, radar.id),
-      deadlineAt,
-    );
     const sourceOutcomes: SourceOutcome[] = [];
     const internalErrors: Array<Record<string, string>> = [];
     const currentTime = () => dependencies.now?.() ?? new Date();
     const tavilyFetcher =
       dependencies.searchTavily ??
       (() => searchTavily({ query: radar!.rules.searchQuery }));
-    const rssFetcher = dependencies.fetchRss ?? (() => fetchMusicNewsRss());
     let sourcePersistence = Promise.resolve();
     const persistOutcomes = (snapshot: SourceOutcome[]) => {
       sourcePersistence = sourcePersistence.then(() => {
@@ -972,38 +914,25 @@ export async function executeClaimedRun(
       return sourcePersistence;
     };
 
-    const [tavilyCandidates, rssCandidates] = await withRunDeadline(
-      Promise.all([
-        fetchSource(
-          "tavily",
-          tavilyFetcher,
-          persistOutcomes,
-          sourceOutcomes,
-          internalErrors,
-        ),
-        ...(shouldFetchMusicNewsRss(radar.rules)
-          ? [
-              fetchSource(
-                "rss" as const,
-                rssFetcher,
-                persistOutcomes,
-                sourceOutcomes,
-                internalErrors,
-              ),
-            ]
-          : [Promise.resolve([] as Candidate[])]),
-      ]),
+    const tavilyCandidates = await withRunDeadline(
+      fetchSource(
+        "tavily",
+        tavilyFetcher,
+        persistOutcomes,
+        sourceOutcomes,
+        internalErrors,
+      ),
       deadlineAt,
     );
     await withRunDeadline(sourcePersistence, deadlineAt);
     assertRunDeadline(deadlineAt);
-    const candidates = [...tavilyCandidates, ...rssCandidates];
     const uniqueCandidates = Array.from(
-      new Map(candidates.map((candidate) => [candidateKey(candidate), candidate])).values(),
+      new Map(
+        tavilyCandidates.map((candidate) => [candidateKey(candidate), candidate]),
+      ).values(),
     );
     const sourceBaselineState: SourceBaselineState = {
-      tavily: isSourceBaselineComplete(radar, "tavily", null),
-      music_news_rss: isSourceBaselineComplete(radar, "music_news_rss", sourceRow),
+      tavily: isTavilyBaselineComplete(radar),
     };
     let evaluations: CandidateEvaluation[] = [];
     let aiFailed = false;
@@ -1052,8 +981,6 @@ export async function executeClaimedRun(
 
     for (const candidate of uniqueCandidates) {
       assertRunDeadline(deadlineAt);
-      const sourceKey: keyof SourceBaselineState =
-        candidate.sourceType === "tavily" ? "tavily" : "music_news_rss";
       const saved = await withRunDeadline(
         saveFinding(
           db,
@@ -1061,7 +988,7 @@ export async function executeClaimedRun(
           radar,
           candidate,
           evaluationMap.get(candidateKey(candidate)) ?? null,
-          sourceBaselineState[sourceKey],
+          sourceBaselineState.tavily,
           leaseOwner,
           deadlineAt,
         ),
@@ -1212,7 +1139,7 @@ export async function executeClaimedRun(
         leaseOwner,
         {
           status,
-          candidateCount: candidates.length,
+          candidateCount: tavilyCandidates.length,
           relevantCount: savedFindings.filter((item) => item.evaluation?.relevant).length,
           notificationCount,
           sourceOutcomes,

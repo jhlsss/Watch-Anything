@@ -43,6 +43,7 @@ type QueryResult = { data: unknown; error: unknown };
 type QueryBuilder = {
   select: () => QueryBuilder;
   eq: () => QueryBuilder;
+  gt: (column: string, value: number) => QueryBuilder;
   order: () => QueryBuilder;
   in: () => QueryBuilder;
   limit: () => Promise<QueryResult>;
@@ -55,6 +56,7 @@ function makeQuery(result: QueryResult): QueryBuilder {
   const builder: QueryBuilder = {
     select: () => builder,
     eq: () => builder,
+    gt: () => builder,
     order: () => builder,
     in: () => builder,
     limit: resolve,
@@ -398,6 +400,30 @@ describe("RadarCard", () => {
 
     expect(screen.getByText("相关 2 / 候选 4")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "编辑规则" })).toBeInTheDocument();
+  });
+
+  it("filters Radar detail findings by positive scores before applying the row limit", async () => {
+    const findingQuery = makeQuery({ data: [], error: null });
+    const gtMock = vi.fn<(column: string, value: number) => QueryBuilder>(
+      () => findingQuery,
+    );
+    findingQuery.gt = gtMock;
+    const fromMock = vi
+      .fn()
+      .mockImplementationOnce(() => makeQuery({ data: { locale: "en" }, error: null }))
+      .mockImplementationOnce(() => makeQuery({ data: detailRadarRow, error: null }))
+      .mockImplementationOnce(() => makeQuery({ data: null, error: null }))
+      .mockImplementationOnce(() => findingQuery)
+      .mockImplementationOnce(() => makeQuery({ data: [], error: null }));
+    setServerClient(fromMock);
+
+    await RadarDetailPage({
+      params: Promise.resolve({ id: detailRadarRow.id }),
+      searchParams: Promise.resolve({ lang: "en" }),
+    });
+
+    expect(gtMock).toHaveBeenNthCalledWith(1, "relevance_score", 0);
+    expect(gtMock).toHaveBeenNthCalledWith(2, "importance_score", 0);
   });
 
   it("shows a readable data error instead of 404 when the radar query fails", async () => {

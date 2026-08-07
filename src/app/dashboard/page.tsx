@@ -205,6 +205,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         .select("id,radar_id,title,summary,source_domain,source_url,published_at,first_seen_at,relevance_score,importance_score,match_reason,notification_eligible")
         .in("radar_id", radarIds)
         .eq("notification_eligible", true)
+        .gt("relevance_score", 0)
+        .gt("importance_score", 0)
         .order("first_seen_at", { ascending: false })
         .limit(3),
       supabase
