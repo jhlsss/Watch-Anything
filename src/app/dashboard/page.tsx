@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { FindingsList, type FindingsListFinding } from "@/components/radar/findings-list";
+import { LogoutButton } from "@/components/auth/logout-button";
 import { WorkspaceLocaleSwitcher, WorkspaceNavigation } from "@/components/radar/radar-actions";
 import { createClient } from "@/lib/supabase/server";
 import { normalizeLocale, type Locale } from "@/lib/i18n";
@@ -50,6 +51,9 @@ const copy = {
     title: (name: string) => `Good morning, ${name}`,
     subtitle: "Here’s what your Radars found.",
     newRadar: "New Radar",
+    logout: "Log out",
+    loggingOut: "Logging out…",
+    logoutError: "Logout failed. Please try again.",
     telegramConnected: "Telegram connected",
     telegramNotConnected: "Telegram not connected",
     telegramConnectedDescription: (username: string | null) =>
@@ -82,6 +86,9 @@ const copy = {
     title: (name: string) => `早上好，${name}`,
     subtitle: "看看你的 Radar 最近发现了什么。",
     newRadar: "+ 新建 Radar",
+    logout: "退出登录",
+    loggingOut: "退出中…",
+    logoutError: "退出失败，请重试。",
     telegramConnected: "Telegram 已连接",
     telegramNotConnected: "Telegram 未连接",
     telegramConnectedDescription: (username: string | null) =>
@@ -281,6 +288,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               <p className="mt-2 text-sm leading-6 text-slate-600">{labels.subtitle}</p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
+              <LogoutButton
+                labels={{
+                  logout: labels.logout,
+                  loggingOut: labels.loggingOut,
+                  error: labels.logoutError,
+                }}
+              />
               <WorkspaceLocaleSwitcher locale={locale} userId={user.id} path="/dashboard" />
               <Link
                 href={`/rules?lang=${locale}`}

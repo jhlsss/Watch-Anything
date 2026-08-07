@@ -11,9 +11,11 @@ const redirectMock = vi.hoisted(() => vi.fn((path: string) => {
 }));
 const createBrowserClientMock = vi.hoisted(() => vi.fn());
 const createServerClientMock = vi.hoisted(() => vi.fn());
+const logoutActionMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/supabase/client", () => ({ createClient: createBrowserClientMock }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: createServerClientMock }));
+vi.mock("@/app/auth/actions", () => ({ logoutAction: logoutActionMock }));
 vi.mock("next/headers", () => ({
   cookies: vi.fn(async () => ({ get: () => undefined })),
 }));
@@ -511,6 +513,7 @@ describe("RadarCard", () => {
       `/radars/${lisaRadar.id}?lang=zh-CN`,
     );
     expect(screen.getByRole("link", { name: /查看全部 Radar/ })).toHaveAttribute("href", "/radars?lang=zh-CN");
+    expect(screen.getByRole("button", { name: "退出登录" })).toBeInTheDocument();
   });
 
   it("does not show the Radars empty state when the radar query fails", async () => {
