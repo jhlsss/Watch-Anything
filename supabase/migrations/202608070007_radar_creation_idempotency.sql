@@ -1,21 +1,28 @@
 alter table public.pending_radar_setups
   add column if not exists radar_id uuid references public.radars (id) on delete set null;
 
-update public.pending_radar_setups setup_row
-   set radar_id = matched_radar.id
-  from lateral (
-    select r.id
-      from public.radars r
-     where r.user_id = setup_row.user_id
-       and r.name = setup_row.radar_name
-       and r.original_prompt = setup_row.original_prompt
-       and r.rules = setup_row.rules
-       and r.created_at >= setup_row.created_at
-     order by r.created_at asc
-     limit 1
-  ) matched_radar
- where setup_row.status = 'consumed'
-   and setup_row.radar_id is null;
+with consumed_setups as (
+  select setup_row.id,
+         (
+           select r.id
+             from public.radars r
+            where r.user_id = setup_row.user_id
+              and r.name = setup_row.radar_name
+              and r.original_prompt = setup_row.original_prompt
+              and r.rules = setup_row.rules
+              and r.created_at >= setup_row.created_at
+            order by r.created_at asc, r.id asc
+            limit 1
+         ) as radar_id
+    from public.pending_radar_setups setup_row
+   where setup_row.status = 'consumed'
+     and setup_row.radar_id is null
+)
+update public.pending_radar_setups as setup_row
+   set radar_id = consumed_setups.radar_id
+  from consumed_setups
+ where setup_row.id = consumed_setups.id
+   and consumed_setups.radar_id is not null;
 
 create index if not exists pending_radar_setups_radar_id_idx
   on public.pending_radar_setups (radar_id)

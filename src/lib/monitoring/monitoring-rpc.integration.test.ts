@@ -16,7 +16,7 @@ describe("monitoring migration contract", () => {
     const migration = readFileSync(
       resolve(
         process.cwd(),
-        "supabase/migrations/202608070003_mvp_manual_bypass_and_baseline_notifications.sql",
+        "supabase/migrations/202608070006_mvp_manual_bypass_and_baseline_notifications.sql",
       ),
       "utf8",
     )
@@ -535,6 +535,7 @@ describe("monitoring migration contract", () => {
     expect(idempotencyMigration).toMatch(
       /alter table public\.pending_radar_setups add column if not exists radar_id uuid/,
     );
+    expect(idempotencyMigration).toContain("with consumed_setups as");
     expect(idempotencyMigration).toMatch(
       /if setup_row\.status = 'consumed'[\s\S]*if setup_row\.radar_id is null[\s\S]*return radar_row/,
     );
