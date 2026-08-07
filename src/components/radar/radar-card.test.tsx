@@ -457,9 +457,41 @@ describe("RadarCard", () => {
   it("keeps the current locale on desktop and mobile workspace links", () => {
     render(<WorkspaceNavigation locale="zh-CN" currentPath="/radars" />);
 
-    expect(screen.getAllByRole("link", { name: "Dashboard" }).every((link) => link.getAttribute("href") === "/dashboard?lang=zh-CN")).toBe(true);
-    expect(screen.getAllByRole("link", { name: "Radars" }).every((link) => link.getAttribute("href") === "/radars?lang=zh-CN")).toBe(true);
+    expect(screen.getAllByRole("link", { name: "工作台" }).every((link) => link.getAttribute("href") === "/dashboard?lang=zh-CN")).toBe(true);
+    expect(screen.getAllByRole("link", { name: "我的 Radars" }).every((link) => link.getAttribute("href") === "/radars?lang=zh-CN")).toBe(true);
     expect(screen.getAllByRole("link", { name: "Telegram" }).every((link) => link.getAttribute("href") === "/connect-telegram?lang=zh-CN")).toBe(true);
+  });
+
+  it("labels the latest Radar run with relevant and candidate counts", async () => {
+    const fromMock = vi
+      .fn()
+      .mockImplementationOnce(() => makeQuery({ data: { locale: "zh-CN" }, error: null }))
+      .mockImplementationOnce(() => makeQuery({ data: detailRadarRow, error: null }))
+      .mockImplementationOnce(() => makeQuery({ data: null, error: null }))
+      .mockImplementationOnce(() => makeQuery({ data: [], error: null }))
+      .mockImplementationOnce(() => makeQuery({
+        data: [{
+          id: "run-summary",
+          trigger: "schedule",
+          status: "success",
+          started_at: "2026-08-06T08:00:00.000Z",
+          finished_at: "2026-08-06T08:00:08.000Z",
+          candidate_count: 4,
+          relevant_count: 2,
+          notification_count: 1,
+          source_outcomes: [{ success: true }],
+        }],
+        error: null,
+      }));
+    setServerClient(fromMock);
+
+    const page = await RadarDetailPage({
+      params: Promise.resolve({ id: detailRadarRow.id }),
+      searchParams: Promise.resolve({ lang: "zh-CN" }),
+    });
+    render(page as ReactElement);
+
+    expect(screen.getByText("相关 2 / 候选 4")).toBeInTheDocument();
   });
 
   it("shows a readable data error instead of 404 when the radar query fails", async () => {
@@ -565,7 +597,7 @@ describe("RadarCard", () => {
     });
     render(page as ReactElement);
 
-    expect(screen.getByRole("link", { name: "我的 Radars" })).toHaveAttribute("href", "/radars?lang=zh-CN");
+    expect(screen.getAllByRole("link", { name: "我的 Radars" }).some((link) => link.getAttribute("href") === "/radars?lang=zh-CN")).toBe(true);
     expect(screen.getByRole("link", { name: "管理 Telegram" })).toHaveAttribute("href", "/connect-telegram?lang=zh-CN");
   });
 

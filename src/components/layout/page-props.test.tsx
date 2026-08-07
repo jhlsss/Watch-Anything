@@ -21,12 +21,27 @@ describe("App Router page searchParams", () => {
   it("keeps workspace navigation pointed at the real destinations", () => {
     render(<AppSidebar locale="en" currentPath="/rules" />);
 
+    expect(screen.getByRole("link", { name: "Watch Anything" }).getAttribute("href")).toBe("/?lang=en");
     expect(screen.getAllByRole("link", { name: "Dashboard" })[0].getAttribute("href")).toBe(
       "/dashboard?lang=en",
     );
     expect(screen.getAllByRole("link", { name: "Radars" })[0].getAttribute("href")).toBe(
       "/radars?lang=en",
     );
+  });
+
+  it("keeps the Radars destination active for a radar detail path", () => {
+    render(<AppSidebar locale="zh-CN" currentPath="/radars/radar-1" />);
+
+    const radarLinks = screen.getAllByRole("link", { name: "我的 Radars" });
+    expect(radarLinks).toHaveLength(2);
+    expect(radarLinks.every((link) => link.getAttribute("aria-current") === "page")).toBe(true);
+  });
+
+  it("names both workspace navigation landmarks in the selected locale", () => {
+    render(<AppSidebar locale="zh-CN" currentPath="/dashboard" />);
+
+    expect(screen.getAllByRole("navigation", { name: "工作区导航" })).toHaveLength(2);
   });
 
   it("unwraps the promised locale on Auth", async () => {

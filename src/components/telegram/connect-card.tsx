@@ -10,10 +10,11 @@ interface ConnectCardProps {
   locale: Locale;
   botUrl?: string | null;
   isPreparing?: boolean;
+  statusMessage?: string | null;
   onConnectTelegram: (payload: { username: string }) => void;
 }
 
-export function ConnectCard({ locale, botUrl, isPreparing = false, onConnectTelegram }: ConnectCardProps) {
+export function ConnectCard({ locale, botUrl, isPreparing = false, statusMessage, onConnectTelegram }: ConnectCardProps) {
   const copy = getMessages(locale).telegram;
 
   return (
@@ -73,9 +74,11 @@ export function ConnectCard({ locale, botUrl, isPreparing = false, onConnectTele
         </Link>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-        {copy.waiting}
-      </div>
+      {statusMessage ? (
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700" role="status" aria-live="polite">
+          {statusMessage}
+        </div>
+      ) : null}
     </section>
   );
 }

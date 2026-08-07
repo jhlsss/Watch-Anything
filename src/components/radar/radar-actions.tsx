@@ -1,17 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
-import { LayoutDashboard, Radar as RadarIcon, Send } from "lucide-react";
 import { useRouter } from "next/navigation";
 
+import { AppSidebar } from "@/components/layout/app-sidebar";
 import { createClient } from "@/lib/supabase/client";
 import type { Locale } from "@/lib/i18n";
 import type { RadarStatus } from "@/types/contracts";
 
 const navigationCopy = {
-  en: { dashboard: "Dashboard", radars: "Radars", telegram: "Telegram", language: "Language" },
-  "zh-CN": { dashboard: "Dashboard", radars: "Radars", telegram: "Telegram", language: "语言" },
+  en: { language: "Language" },
+  "zh-CN": { language: "语言" },
 } as const;
 
 const actionCopy = {
@@ -58,68 +57,7 @@ const actionCopy = {
 } as const;
 
 export function WorkspaceNavigation({ locale, currentPath }: { locale: Locale; currentPath: string }) {
-  const labels = navigationCopy[locale];
-  const localizedHref = (href: string) => `${href}?lang=${locale}`;
-  const items = [
-    { href: "/dashboard", label: labels.dashboard, icon: LayoutDashboard, active: currentPath === "/dashboard" },
-    {
-      href: "/radars",
-      label: labels.radars,
-      icon: RadarIcon,
-      active: currentPath === "/radars" || currentPath.startsWith("/radars/"),
-    },
-    { href: "/connect-telegram", label: labels.telegram, icon: Send, active: currentPath === "/connect-telegram" },
-  ];
-
-  return (
-    <>
-      <aside className="hidden w-60 shrink-0 bg-slate-950 text-white min-[850px]:block">
-        <div className="sticky top-0 flex min-h-screen flex-col px-4 py-6">
-          <Link href={localizedHref("/dashboard")} className="flex items-center gap-3 px-3 text-sm font-semibold text-white">
-            <span className="grid h-8 w-8 place-items-center rounded-xl bg-violet-500 text-white">
-              <RadarIcon className="h-4 w-4" aria-hidden="true" />
-            </span>
-            Watch Anything
-          </Link>
-          <nav className="mt-8 grid gap-2" aria-label="Workspace navigation">
-            {items.map(({ href, label, icon: Icon, active }) => (
-              <Link
-                key={href}
-                href={localizedHref(href)}
-                className={
-                  active
-                    ? "flex items-center gap-3 rounded-2xl bg-white/10 px-3 py-3 text-sm font-semibold text-white"
-                    : "flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-semibold text-slate-400 transition hover:bg-white/5 hover:text-white"
-                }
-              >
-                <Icon className="h-4 w-4" aria-hidden="true" />
-                {label}
-              </Link>
-            ))}
-          </nav>
-        </div>
-      </aside>
-
-      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-3 py-2 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur min-[850px]:hidden" aria-label="Workspace navigation">
-        <div className="mx-auto grid max-w-md grid-cols-3 gap-2">
-          {items.map(({ href, label, icon: Icon, active }) => (
-            <Link
-              key={href}
-              href={localizedHref(href)}
-              className={
-                active
-                  ? "flex min-h-12 flex-col items-center justify-center gap-1 rounded-2xl bg-violet-50 px-2 py-1 text-xs font-semibold text-violet-700"
-                  : "flex min-h-12 flex-col items-center justify-center gap-1 rounded-2xl px-2 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-50"
-              }
-            >
-              <Icon className="h-4 w-4" aria-hidden="true" />
-              <span>{label}</span>
-            </Link>
-          ))}
-        </div>
-      </nav>
-    </>
-  );
+  return <AppSidebar locale={locale} currentPath={currentPath} />;
 }
 
 export function WorkspaceLocaleSwitcher({
@@ -176,8 +114,8 @@ export function WorkspaceLocaleSwitcher({
             onClick={() => void changeLocale(value)}
             className={
               value === locale
-                ? "rounded-lg bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-950 shadow-sm"
-                : "rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-500 transition hover:text-slate-950"
+                ? "rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-950 shadow-sm"
+                : "rounded-lg px-3 py-2 text-xs font-semibold text-slate-500 transition hover:text-slate-950"
             }
           >
             {value === "en" ? "EN" : "中文"}

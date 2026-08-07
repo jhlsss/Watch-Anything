@@ -192,7 +192,7 @@ export default async function RadarsPage({ searchParams }: { searchParams: Searc
             </section>
           ) : (
             <>
-              <section className="mt-7 grid min-w-0 gap-4 min-[850px]:grid-cols-2">
+              <section className="mt-7 grid min-w-0 gap-3">
                 {radars.map((radar) => (
                   <RadarCard key={radar.id} radar={cardRadar(radar, findingCounts.get(radar.id) ?? 0)} locale={locale} />
                 ))}

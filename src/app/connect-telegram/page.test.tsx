@@ -45,5 +45,6 @@ describe("ConnectTelegramPage", () => {
       "/api/telegram/binding-token",
       expect.objectContaining({ method: "POST" }),
     );
+    expect(screen.queryByText("Waiting for Telegram connection confirmation.")).toBeNull();
   });
 });

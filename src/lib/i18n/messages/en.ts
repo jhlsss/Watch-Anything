@@ -12,6 +12,8 @@ const en = {
     examples: "Examples",
     login: "Log in",
     getStarted: "Get started",
+    workspace: "Open workspace",
+    workspaceNavigation: "Workspace navigation",
     dashboard: "Dashboard",
     radars: "Radars",
     telegram: "Telegram",
@@ -211,7 +213,7 @@ const en = {
     preparing: "Preparing Telegram link…",
     connect: "I have started the bot",
     skip: "Back to rules",
-    waiting: "Waiting for your app flow to verify the Telegram connection callback.",
+    waiting: "Waiting for Telegram connection confirmation.",
   },
 } as const;
 

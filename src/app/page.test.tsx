@@ -1,6 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Home from "@/app/page";
+
+const createBrowserClientMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/supabase/client", () => ({ createClient: createBrowserClientMock }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
@@ -8,6 +12,7 @@ vi.mock("next/navigation", () => ({
 
 afterEach(() => {
   cleanup();
+  createBrowserClientMock.mockReset();
   document.documentElement.lang = "en";
   window.history.replaceState(null, "", "/");
 });
@@ -22,7 +27,27 @@ const fulfilledChineseSearchParams = Object.assign(Promise.resolve({ lang: "zh-C
   value: { lang: "zh-CN" },
 });
 
+beforeEach(() => {
+  createBrowserClientMock.mockReturnValue({
+    auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null } }) },
+  });
+});
+
 describe("Landing templates", () => {
+  it("shows the signed-in account and workspace link on the homepage", async () => {
+    createBrowserClientMock.mockReturnValue({
+      auth: {
+        getUser: vi.fn().mockResolvedValue({ data: { user: { email: "qa@example.com" } } }),
+      },
+    });
+
+    render(<Home searchParams={fulfilledSearchParams as never} />);
+
+    expect((await screen.findByRole("link", { name: "qa@example.com" })).getAttribute("href")).toBe("/dashboard?lang=en");
+    expect(screen.getByRole("link", { name: "Open workspace" }).getAttribute("href")).toBe("/dashboard?lang=en");
+    expect(screen.queryByRole("link", { name: "Log in" })).toBeNull();
+  });
+
   it("prefills the hero request without navigating to the rules page", () => {
     render(<Home searchParams={fulfilledSearchParams as never} />);
 
@@ -61,14 +86,23 @@ describe("Landing templates", () => {
   });
 
   it("points Get started at the hero request area", () => {
+    createBrowserClientMock.mockReturnValue({
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null } }) },
+    });
+
     render(<Home searchParams={fulfilledSearchParams as never} />);
 
+    expect(screen.getByRole("link", { name: "Log in" }).getAttribute("href")).toBe("/auth?lang=en");
     expect(screen.getByRole("link", { name: "Get started" }).getAttribute("href")).toBe(
       "/?lang=en#hero-request",
     );
   });
 
   it("uses the prototype typography scale for the landing hierarchy", () => {
+    createBrowserClientMock.mockReturnValue({
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null } }) },
+    });
+
     render(<Home searchParams={fulfilledSearchParams as never} />);
 
     expect(screen.getByRole("heading", { name: /Never misswhat matters/ }).className).toContain(

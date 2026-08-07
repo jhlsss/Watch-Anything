@@ -193,12 +193,10 @@ export default function ConnectTelegramPage({
             ? "Telegram 已连接，正在激活 Radar…"
             : "Telegram is connected. Activating your Radar…"
           : connectionState === "error"
-          ? locale === "zh-CN"
-            ? "Telegram 连接未完成。"
-            : "Telegram connection is not complete."
-          : locale === "zh-CN"
-              ? "请使用上面的链接打开 Telegram，点击 Start 后回来确认。"
-              : "Open Telegram with the link above, tap Start, then confirm here.";
+            ? locale === "zh-CN"
+              ? "Telegram 连接未完成。"
+              : "Telegram connection is not complete."
+            : null;
 
   return (
     <main className="flex min-h-screen min-w-0 bg-slate-50 text-slate-950">
@@ -209,13 +207,11 @@ export default function ConnectTelegramPage({
             locale={locale}
             botUrl={botUrl}
             isPreparing={connectionState === "opening"}
+            statusMessage={statusText}
             onConnectTelegram={() => {
               beginTelegramConnection();
             }}
           />
-          <p className="mt-4 rounded-2xl bg-slate-100 p-4 text-sm text-slate-600" role="status" aria-live="polite">
-            {statusText}
-          </p>
           {error ? (
             <p className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700" role="alert">
               {error}

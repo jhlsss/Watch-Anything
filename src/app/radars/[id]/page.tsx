@@ -105,6 +105,7 @@ const copy = {
     dataError: "Some live details could not be loaded. Refresh and try again.",
     retry: "Retry",
     runStats: "Latest run",
+    runSummary: (relevant: number, candidates: number) => `Relevant ${relevant} / Candidates ${candidates}`,
     noLatestRun: "No completed run yet",
     sources: "sources",
     emptyRules: "No topics configured",
@@ -142,6 +143,7 @@ const copy = {
     dataError: "部分实时详情加载失败，请刷新后重试。",
     retry: "重试",
     runStats: "最近一次运行",
+    runSummary: (relevant: number, candidates: number) => `相关 ${relevant} / 候选 ${candidates}`,
     noLatestRun: "还没有完成的运行记录",
     sources: "个来源",
     emptyRules: "还没有配置关注内容",
@@ -416,7 +418,7 @@ export default async function RadarDetailPage({ params, searchParams }: { params
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <p className="text-xs text-slate-500">{labels.runStats}</p>
-              <p className="mt-2 truncate text-sm font-semibold text-slate-950">{latestRun ? `${latestRun.relevant_count} / ${latestRun.candidate_count}` : labels.noLatestRun}</p>
+              <p className="mt-2 truncate text-sm font-semibold text-slate-950">{latestRun ? labels.runSummary(latestRun.relevant_count, latestRun.candidate_count) : labels.noLatestRun}</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <p className="text-xs text-slate-500">{labels.notified}</p>
@@ -445,8 +447,8 @@ export default async function RadarDetailPage({ params, searchParams }: { params
               </div>
             </div>
 
-            <aside className="min-w-0 space-y-4">
-              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <aside className="min-w-0 space-y-4 self-start min-[850px]:sticky min-[850px]:top-6">
+              <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
                 <h2 className="text-lg font-semibold text-slate-950">{labels.rulesTitle}</h2>
                 <div className="mt-5 grid gap-5">
                   <div>
@@ -473,7 +475,7 @@ export default async function RadarDetailPage({ params, searchParams }: { params
                 </div>
               </section>
 
-              <section className="rounded-3xl border border-violet-100 bg-violet-50 p-5">
+              <section className="rounded-3xl border border-violet-100 bg-violet-50 p-4 sm:p-5">
                 <div className="flex items-start gap-3">
                   {connectionError ? <Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden="true" /> : connection ? <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" aria-hidden="true" /> : <Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden="true" />}
                   <div className="min-w-0">

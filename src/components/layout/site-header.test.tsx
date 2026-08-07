@@ -34,4 +34,18 @@ describe("SiteHeader", () => {
     expect(className).toContain("w-[calc(100%_-_28px)]");
     expect(className).toContain("min-[850px]:w-[calc(100%_-_44px)]");
   });
+
+  it("renders a localized account action when the visitor is signed in", () => {
+    render(
+      <SiteHeader
+        locale="zh-CN"
+        brand="Watch Anything"
+        localeLabel="语言"
+        localeNames={{ en: "EN", "zh-CN": "中文" }}
+        accountAction={{ href: "/dashboard", label: "qa@example.com" }}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "qa@example.com" }).getAttribute("href")).toBe("/dashboard?lang=zh-CN");
+  });
 });

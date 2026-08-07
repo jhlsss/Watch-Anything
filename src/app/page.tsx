@@ -3,6 +3,7 @@
 import { Hero } from "@/components/landing/hero";
 import { SiteHeader } from "@/components/layout/site-header";
 import { getMessages, normalizeLocale } from "@/lib/i18n";
+import { createClient } from "@/lib/supabase/client";
 import { Activity, ArrowRight, ArrowUpRight, BriefcaseBusiness, Building2, Radio, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -26,10 +27,34 @@ export default function Home({
   const [ctaRequest, setCtaRequest] = useState("");
   const [ctaRequestError, setCtaRequestError] = useState(false);
   const [currentHash, setCurrentHash] = useState("");
+  const [accountEmail, setAccountEmail] = useState<string | null>(null);
 
   useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);
+
+  useEffect(() => {
+    let active = true;
+
+    try {
+      const supabase = createClient();
+      void supabase.auth.getUser().then(({ data: { user } }) => {
+        if (active) {
+          setAccountEmail(user?.email ?? null);
+        }
+      }).catch(() => {
+        if (active) {
+          setAccountEmail(null);
+        }
+      });
+    } catch {
+      // Keep the public header when the browser client cannot be created.
+    }
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     const updateHash = () => setCurrentHash(window.location.hash);
@@ -94,8 +119,11 @@ export default function Home({
           { href: "/#how", label: copy.nav.howItWorks },
           { href: "/#templates", label: copy.nav.examples },
         ]}
-        secondaryAction={{ href: "/auth", label: copy.nav.login }}
-        primaryAction={{ href: "/#hero-request", label: copy.nav.getStarted }}
+        accountAction={accountEmail ? { href: "/dashboard", label: accountEmail } : undefined}
+        secondaryAction={accountEmail ? undefined : { href: "/auth", label: copy.nav.login }}
+        primaryAction={accountEmail
+          ? { href: "/dashboard", label: copy.nav.workspace }
+          : { href: "/#hero-request", label: copy.nav.getStarted }}
       />
 
       <div className="border-b border-slate-200 bg-[radial-gradient(circle_at_top_right,_rgba(167,139,250,0.18),_transparent_30%),linear-gradient(#ffffff,#faf7ff)]">

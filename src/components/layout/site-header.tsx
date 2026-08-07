@@ -18,6 +18,7 @@ interface SiteHeaderProps {
   localeNames: Record<Locale, string>;
   currentHash?: string;
   navLinks?: NavLink[];
+  accountAction?: NavLink;
   primaryAction?: NavLink;
   secondaryAction?: NavLink;
   className?: string;
@@ -51,6 +52,7 @@ export function SiteHeader({
   localeNames,
   currentHash = "",
   navLinks = [],
+  accountAction,
   primaryAction,
   secondaryAction,
   className,
@@ -72,6 +74,16 @@ export function SiteHeader({
                 </Link>
               ))}
             </nav>
+          ) : null}
+
+          {accountAction ? (
+            <Link
+              href={withLocale(accountAction.href, locale)}
+              title={accountAction.label}
+              className="inline-flex min-h-10 max-w-[132px] min-w-0 items-center rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2 sm:max-w-[220px] sm:text-sm"
+            >
+              <span className="truncate">{accountAction.label}</span>
+            </Link>
           ) : null}
 
           <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1" aria-label={localeLabel}>

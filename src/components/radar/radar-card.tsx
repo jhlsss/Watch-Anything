@@ -61,11 +61,11 @@ export function RadarCard({ radar, locale }: { radar: RadarCardRadar; locale: Lo
     : formatDate(radar.nextCheckAt, locale, labels.noCheck);
 
   return (
-    <article className="min-w-0 rounded-3xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-violet-200 hover:shadow-md">
+    <article className="min-w-0 rounded-2xl border border-slate-200 bg-white shadow-sm transition-colors hover:border-violet-200 hover:shadow-md">
       <Link
         href={`/radars/${radar.id}?lang=${locale}`}
         aria-label={radar.name}
-        className="block min-w-0 p-5 outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-inset"
+        className="block min-w-0 p-4 outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-inset sm:p-5"
       >
         <div className="flex min-w-0 items-start justify-between gap-3">
           <div className="flex min-w-0 gap-3">
@@ -103,7 +103,7 @@ export function RadarCard({ radar, locale }: { radar: RadarCardRadar; locale: Lo
           </div>
           <div className="min-w-0">
             <p className="text-slate-500">{labels.newFindings}</p>
-            <p className="mt-1 font-semibold text-slate-900">{radar.newFindings}</p>
+            <p className={radar.newFindings > 0 ? "mt-1 font-semibold text-violet-700" : "mt-1 font-semibold text-slate-900"}>{radar.newFindings}</p>
           </div>
           <div className="min-w-0">
             <p className="text-slate-500">{labels.nextCheck}</p>

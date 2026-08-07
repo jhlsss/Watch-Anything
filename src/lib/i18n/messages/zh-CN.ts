@@ -12,8 +12,10 @@ const zhCN = {
     examples: "示例",
     login: "登录",
     getStarted: "开始使用",
-    dashboard: "Dashboard",
-    radars: "Radars",
+    workspace: "进入工作区",
+    workspaceNavigation: "工作区导航",
+    dashboard: "工作台",
+    radars: "我的 Radars",
     telegram: "Telegram",
   },
   landing: {
@@ -206,7 +208,7 @@ const zhCN = {
     preparing: "正在准备 Telegram 链接…",
     connect: "我已经启动机器人",
     skip: "返回规则页",
-    waiting: "正在等待你的应用流程验证 Telegram callback。",
+    waiting: "正在等待 Telegram 连接确认。",
   },
 } as const;
 

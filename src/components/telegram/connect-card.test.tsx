@@ -29,6 +29,7 @@ describe("ConnectCard", () => {
       <ConnectCard
         locale="en"
         botUrl="https://t.me/watchanything_bot?start=one-time-token"
+        statusMessage={copy.waiting}
         onConnectTelegram={onConnectTelegram}
       />,
     );
@@ -38,5 +39,19 @@ describe("ConnectCard", () => {
     expect(onConnectTelegram).toHaveBeenCalledWith({ username: "@watchanything_bot" });
     expect(screen.getByText(copy.waiting)).not.toBeNull();
     expect(screen.queryByText(/callback completed locally/i)).toBeNull();
+  });
+
+  it("does not show a waiting message before confirmation begins", () => {
+    const copy = getMessages("en").telegram;
+
+    render(
+      <ConnectCard
+        locale="en"
+        botUrl="https://t.me/watchanything_bot?start=one-time-token"
+        onConnectTelegram={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText(copy.waiting)).toBeNull();
   });
 });
