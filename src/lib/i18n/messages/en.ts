@@ -209,9 +209,14 @@ const en = {
     ],
     openBot: "Open Telegram and start the bot",
     preparing: "Preparing Telegram link…",
+    checking: "Checking Telegram connection…",
     connect: "I have started the bot",
     skip: "Back to rules",
     waiting: "Waiting for your app flow to verify the Telegram connection callback.",
+    connected: "Telegram is connected.",
+    activating: "Telegram is connected. Activating your Radar…",
+    noPendingSetup: "Telegram is connected. There is no Radar waiting to be activated.",
+    activationError: "Telegram is connected, but Radar activation needs attention.",
   },
 } as const;
 

@@ -39,4 +39,24 @@ describe("ConnectCard", () => {
     expect(screen.getByText(copy.waiting)).not.toBeNull();
     expect(screen.queryByText(/callback completed locally/i)).toBeNull();
   });
+
+  it("disables confirmation while the connection check is in progress", () => {
+    const onConnectTelegram = vi.fn();
+    const copy = getMessages("en").telegram;
+
+    render(
+      <ConnectCard
+        locale="en"
+        botUrl="https://t.me/watchanything_bot?start=one-time-token"
+        isChecking
+        onConnectTelegram={onConnectTelegram}
+      />,
+    );
+
+    const button = screen.getByRole("button", { name: copy.checking });
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(button);
+    expect(onConnectTelegram).not.toHaveBeenCalled();
+  });
 });

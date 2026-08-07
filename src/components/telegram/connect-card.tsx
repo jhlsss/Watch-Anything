@@ -10,10 +10,17 @@ interface ConnectCardProps {
   locale: Locale;
   botUrl?: string | null;
   isPreparing?: boolean;
+  isChecking?: boolean;
   onConnectTelegram: (payload: { username: string }) => void;
 }
 
-export function ConnectCard({ locale, botUrl, isPreparing = false, onConnectTelegram }: ConnectCardProps) {
+export function ConnectCard({
+  locale,
+  botUrl,
+  isPreparing = false,
+  isChecking = false,
+  onConnectTelegram,
+}: ConnectCardProps) {
   const copy = getMessages(locale).telegram;
 
   return (
@@ -57,13 +64,13 @@ export function ConnectCard({ locale, botUrl, isPreparing = false, onConnectTele
           </a>
         ) : null}
         <Button
-          disabled={isPreparing}
+          disabled={isPreparing || isChecking}
           className="h-11 rounded-2xl bg-violet-600 text-white hover:bg-violet-500"
           onClick={() => {
             onConnectTelegram({ username: "@watchanything_bot" });
           }}
         >
-          {isPreparing ? copy.preparing : copy.connect}
+          {isPreparing ? copy.preparing : isChecking ? copy.checking : copy.connect}
         </Button>
         <Link
           href={`/rules?lang=${locale}`}

@@ -204,9 +204,14 @@ const zhCN = {
     ],
     openBot: "打开 Telegram 并启动机器人",
     preparing: "正在准备 Telegram 链接…",
+    checking: "正在确认 Telegram 连接…",
     connect: "我已经启动机器人",
     skip: "返回规则页",
     waiting: "正在等待你的应用流程验证 Telegram callback。",
+    connected: "Telegram 已连接。",
+    activating: "Telegram 已连接，正在启用 Radar…",
+    noPendingSetup: "Telegram 已连接。当前没有等待启用的 Radar。",
+    activationError: "Telegram 已连接，但 Radar 启用还需要处理。",
   },
 } as const;
 
