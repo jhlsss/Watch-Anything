@@ -8,10 +8,12 @@ import { getMessages } from "@/lib/i18n";
 
 interface ConnectCardProps {
   locale: Locale;
+  botUrl?: string | null;
+  isPreparing?: boolean;
   onConnectTelegram: (payload: { username: string }) => void;
 }
 
-export function ConnectCard({ locale, onConnectTelegram }: ConnectCardProps) {
+export function ConnectCard({ locale, botUrl, isPreparing = false, onConnectTelegram }: ConnectCardProps) {
   const copy = getMessages(locale).telegram;
 
   return (
@@ -44,13 +46,24 @@ export function ConnectCard({ locale, onConnectTelegram }: ConnectCardProps) {
       </div>
 
       <div className="mt-6 flex flex-col gap-3 min-[850px]:flex-row">
+        {botUrl ? (
+          <a
+            href={botUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex h-11 items-center justify-center rounded-2xl bg-violet-600 px-4 text-sm font-semibold text-white transition hover:bg-violet-500"
+          >
+            {copy.openBot}
+          </a>
+        ) : null}
         <Button
+          disabled={isPreparing}
           className="h-11 rounded-2xl bg-violet-600 text-white hover:bg-violet-500"
           onClick={() => {
             onConnectTelegram({ username: "@watchanything_bot" });
           }}
         >
-          {copy.connect}
+          {isPreparing ? copy.preparing : copy.connect}
         </Button>
         <Link
           href={`/rules?lang=${locale}`}

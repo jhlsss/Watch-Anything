@@ -201,12 +201,14 @@ const en = {
     description:
       "Your Radar will send important new findings to one private Telegram chat. This connection is shared by all your Radars.",
     botLabel: "Official bot",
-    botHint: "Open Telegram and start the bot before connecting.",
+    botHint: "Use the link below to open Telegram and start the bot.",
     steps: [
-      "Open Telegram and search for the bot username.",
+      "Open Telegram using the link below.",
       "Tap Start in the chat so the bot can identify your account.",
       "Return here and confirm the connection.",
     ],
+    openBot: "Open Telegram and start the bot",
+    preparing: "Preparing Telegram link…",
     connect: "I have started the bot",
     skip: "Back to rules",
     waiting: "Waiting for your app flow to verify the Telegram connection callback.",

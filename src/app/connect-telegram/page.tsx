@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useRef, useState } from "react";
+import { use, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { ConnectCard } from "@/components/telegram/connect-card";
@@ -36,18 +36,60 @@ export default function ConnectTelegramPage({
   const copy = getMessages(locale);
   const router = useRouter();
   const [connectionState, setConnectionState] = useState<ConnectionState>("idle");
+  const [botUrl, setBotUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const attemptRef = useRef(0);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const prepareTelegramLink = useCallback(
+    async (attempt: number) => {
+      setConnectionState("opening");
+      setBotUrl(null);
+      setError(null);
+
+      try {
+        const response = await fetch("/api/telegram/binding-token", {
+          method: "POST",
+          cache: "no-store",
+        });
+        const body = (await response.json()) as { botUrl?: string };
+
+        if (!response.ok || !body.botUrl) {
+          throw new Error("BINDING_TOKEN_CREATE_FAILED");
+        }
+
+        if (attempt !== attemptRef.current) {
+          return;
+        }
+
+        setBotUrl(body.botUrl);
+        setConnectionState("idle");
+      } catch {
+        if (attempt === attemptRef.current) {
+          setConnectionState("error");
+          setError(
+            locale === "zh-CN"
+              ? "无法生成 Telegram 连接链接，请稍后重试。"
+              : "We could not create a Telegram connection link. Please try again.",
+          );
+        }
+      }
+    },
+    [locale],
+  );
+
   useEffect(() => {
+    const attempt = attemptRef.current + 1;
+    attemptRef.current = attempt;
+    void prepareTelegramLink(attempt);
+
     return () => {
       attemptRef.current += 1;
       if (pollTimerRef.current) {
         clearTimeout(pollTimerRef.current);
       }
     };
-  }, []);
+  }, [prepareTelegramLink]);
 
   const activateRadar = async (attempt: number) => {
     const setupResponse = await fetch("/api/pending-setups/current", {
@@ -124,42 +166,19 @@ export default function ConnectTelegramPage({
     void poll();
   };
 
-  const beginTelegramConnection = async () => {
+  const beginTelegramConnection = () => {
+    if (!botUrl) {
+      const attempt = attemptRef.current + 1;
+      attemptRef.current = attempt;
+      void prepareTelegramLink(attempt);
+      return;
+    }
+
     const attempt = attemptRef.current + 1;
     attemptRef.current = attempt;
-    setConnectionState("opening");
+    setConnectionState("waiting");
     setError(null);
-
-    const telegramWindow = window.open("about:blank", "_blank");
-
-    try {
-      const response = await fetch("/api/telegram/binding-token", {
-        method: "POST",
-        cache: "no-store",
-      });
-      const body = (await response.json()) as { botUrl?: string };
-
-      if (!response.ok || !body.botUrl) {
-        throw new Error("BINDING_TOKEN_CREATE_FAILED");
-      }
-
-      if (telegramWindow) {
-        telegramWindow.location.href = body.botUrl;
-      } else {
-        window.open(body.botUrl, "_blank");
-      }
-
-      setConnectionState("waiting");
-      pollForConnection(attempt, Date.now());
-    } catch {
-      telegramWindow?.close();
-      setConnectionState("error");
-      setError(
-        locale === "zh-CN"
-          ? "无法生成 Telegram 连接链接，请稍后重试。"
-          : "We could not create a Telegram connection link. Please try again.",
-      );
-    }
+    pollForConnection(attempt, Date.now());
   };
 
   const statusText =
@@ -174,12 +193,12 @@ export default function ConnectTelegramPage({
             ? "Telegram 已连接，正在激活 Radar…"
             : "Telegram is connected. Activating your Radar…"
           : connectionState === "error"
-            ? locale === "zh-CN"
-              ? "Telegram 连接未完成。"
-              : "Telegram connection is not complete."
-            : locale === "zh-CN"
-              ? "尚未连接 Telegram。"
-              : "Telegram is not connected yet.";
+          ? locale === "zh-CN"
+            ? "Telegram 连接未完成。"
+            : "Telegram connection is not complete."
+          : locale === "zh-CN"
+              ? "请使用上面的链接打开 Telegram，点击 Start 后回来确认。"
+              : "Open Telegram with the link above, tap Start, then confirm here.";
 
   return (
     <main className="flex min-h-screen min-w-0 bg-slate-50 text-slate-950">
@@ -188,8 +207,10 @@ export default function ConnectTelegramPage({
         <div className="mx-auto w-full max-w-3xl">
           <ConnectCard
             locale={locale}
+            botUrl={botUrl}
+            isPreparing={connectionState === "opening"}
             onConnectTelegram={() => {
-              void beginTelegramConnection();
+              beginTelegramConnection();
             }}
           />
           <p className="mt-4 rounded-2xl bg-slate-100 p-4 text-sm text-slate-600" role="status" aria-live="polite">
