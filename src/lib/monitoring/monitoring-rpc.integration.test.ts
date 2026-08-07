@@ -111,6 +111,52 @@ describe("monitoring migration contract", () => {
     );
   });
 
+  it("qualifies radar_id in create_pending_notification_for_run", () => {
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "supabase/migrations/202608060002_monitoring_functions.sql",
+      ),
+      "utf8",
+    )
+      .replace(/--.*$/gm, "")
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+    const functionStart = migration.indexOf(
+      "create or replace function public.create_pending_notification_for_run",
+    );
+    const functionBody = migration.slice(functionStart, migration.indexOf("$$;", functionStart));
+
+    expect(functionBody).toContain(
+      "update public.radar_runs as run_update set lease_expires_at = run_update.lease_expires_at where run_update.id = p_run_id and run_update.radar_id = radar_id_for_run",
+    );
+    expect(functionBody).not.toMatch(/where id = p_run_id and radar_id = radar_id_for_run/);
+  });
+
+  it("ships a production correction migration for create_pending_notification_for_run", () => {
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "supabase/migrations/202608070005_fix_create_pending_notification_radar_id.sql",
+      ),
+      "utf8",
+    )
+      .replace(/--.*$/gm, "")
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+
+    expect(migration).toContain(
+      "create or replace function public.create_pending_notification_for_run",
+    );
+    expect(migration).toContain(
+      "run_update.radar_id = radar_id_for_run",
+    );
+    expect(migration).not.toMatch(/where id = p_run_id and radar_id = radar_id_for_run/);
+    expect(migration).toContain(
+      "grant execute on function public.create_pending_notification_for_run",
+    );
+  });
+
   it("uses fixed search paths and service-role-only RPC execution", () => {
     const migration = readFileSync(
       resolve(
