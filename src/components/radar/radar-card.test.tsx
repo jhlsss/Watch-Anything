@@ -544,6 +544,7 @@ describe("RadarCard", () => {
     render(page as ReactElement);
 
     expect(screen.getByRole("alert")).toHaveTextContent("Some live data could not be loaded. Refresh and try again.");
+    expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
     expect(screen.queryByText("No important findings yet")).not.toBeInTheDocument();
     expect(screen.queryByText("Your next successful check will appear here.")).not.toBeInTheDocument();
   });
