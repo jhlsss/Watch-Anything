@@ -56,7 +56,7 @@ begin
     p_username,
     timezone('utc', clock_timestamp())
   )
-  on conflict (user_id) do update
+  on conflict on constraint telegram_connections_pkey do update
     set chat_id = excluded.chat_id,
         telegram_username = excluded.telegram_username,
         connected_at = excluded.connected_at;

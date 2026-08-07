@@ -87,4 +87,20 @@ describe("Telegram binding tokens", () => {
       /grant execute on function public\.consume_telegram_binding_token\(text, bigint, text\) to service_role/,
     );
   });
+
+  it("avoids the output user_id variable in the telegram connection conflict target", () => {
+    const migrationPath = resolve(
+      process.cwd(),
+      "supabase/migrations/202608060003_telegram_binding.sql",
+    );
+    const migration = readFileSync(migrationPath, "utf8")
+      .replace(/--.*$/gm, "")
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+
+    expect(migration).toContain(
+      "on conflict on constraint telegram_connections_pkey",
+    );
+    expect(migration).not.toMatch(/on conflict\s*\(\s*user_id\s*\)/);
+  });
 });
