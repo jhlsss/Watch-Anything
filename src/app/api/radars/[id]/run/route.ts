@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getMonitoringClient, MonitoringError } from "@/lib/monitoring/create-radar";
+import { isMvpManualRunBypassUser } from "@/lib/monitoring/manual-run-policy";
 import {
   MONITORING_ROUTE_BUDGET_MS,
   runRadar,
@@ -68,6 +69,7 @@ export async function POST(_request: Request, { params }: RouteContext) {
   try {
     const run = await runRadar(id, "manual", {
       client: db,
+      bypassManualLimits: isMvpManualRunBypassUser(user.id),
       outerDeadlineAt,
     });
     return NextResponse.json({ run });

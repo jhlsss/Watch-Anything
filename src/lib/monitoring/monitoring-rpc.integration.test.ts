@@ -12,6 +12,52 @@ function firstRow<T>(data: unknown): T | null {
 }
 
 describe("monitoring migration contract", () => {
+  it("allows eligible baseline findings to notify and restricts the MVP bypass RPC", () => {
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "supabase/migrations/202608070003_mvp_manual_bypass_and_baseline_notifications.sql",
+      ),
+      "utf8",
+    )
+      .replace(/--.*$/gm, "")
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+
+    expect(migration).toContain(
+      "create table if not exists public.mvp_manual_run_bypass_users",
+    );
+    expect(migration).toContain("bf2a2366-47b7-40ba-aed5-04410f787fff");
+    expect(migration).toContain("a40b13f7-12d8-4b5a-a7d2-f2b55cc7e6cd");
+    expect(migration).toMatch(
+      /revoke all on table public\.mvp_manual_run_bypass_users from public, anon, authenticated/,
+    );
+
+    const persistStart = migration.indexOf(
+      "create or replace function public.persist_run_finding",
+    );
+    const persistBody = migration.slice(persistStart, migration.indexOf("$$;", persistStart));
+    expect(persistBody).toContain(
+      "current_eligible := p_relevant and p_importance_score >= threshold",
+    );
+    expect(persistBody).not.toContain(
+      "current_eligible := not first_seen and p_source_was_baselined",
+    );
+
+    const bypassStart = migration.indexOf(
+      "create or replace function public.claim_radar_run_for_mvp_bypass",
+    );
+    const bypassBody = migration.slice(bypassStart, migration.indexOf("$$;", bypassStart));
+    expect(bypassBody).toContain("p_trigger is distinct from 'manual'");
+    expect(bypassBody).toContain("mvp_manual_run_bypass_users");
+    expect(bypassBody).toContain("public.claim_radar_run");
+    expect(bypassBody).toContain("'baseline'");
+    expect(bypassBody).toContain("set trigger = 'manual'");
+    expect(migration).toMatch(
+      /grant execute on function public\.claim_radar_run_for_mvp_bypass\(uuid, uuid, text, uuid, timestamptz\) to service_role/,
+    );
+  });
+
   it("uses fixed search paths and service-role-only RPC execution", () => {
     const migration = readFileSync(
       resolve(

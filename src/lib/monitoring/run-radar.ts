@@ -96,6 +96,7 @@ type PendingNotificationSender = (
 
 export type RunRadarDependencies = {
   client?: MonitoringClient;
+  bypassManualLimits?: boolean;
   searchTavily?: SourceFetcher;
   fetchRss?: SourceFetcher;
   evaluate?: CandidateEvaluator;
@@ -691,7 +692,6 @@ async function saveFinding(
     finding,
     eligible: Boolean(
       finding.notification_eligible &&
-        !finding.first_seen_during_baseline &&
         relevant &&
         importanceScore >= radar.rules.importanceThreshold,
     ),
@@ -891,8 +891,12 @@ export async function runRadar(
     throw runDeadlineError();
   }
   const leaseExpiresAt = new Date(leaseExpiresAtMs).toISOString();
+  const claimFunction =
+    trigger === "manual" && dependencies.bypassManualLimits
+      ? "claim_radar_run_for_mvp_bypass"
+      : "claim_radar_run";
   const claimResult = await withRunDeadline(
-    db.rpc("claim_radar_run", {
+    db.rpc(claimFunction, {
       p_radar_id: radarId,
       p_user_id: ownerId,
       p_trigger: trigger,
