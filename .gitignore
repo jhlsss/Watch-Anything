@@ -42,6 +42,7 @@ yarn-error.log*
 next-env.d.ts
 
 # local agent and QA artifacts
+/.worktrees/
 /.codegraph/
 /.gstack/
 /.superpowers/
