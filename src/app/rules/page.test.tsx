@@ -90,9 +90,14 @@ describe("RulesPage", () => {
   it("sends a confirmed parsed draft to Auth", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ rules, ruleToken: "signed-rule-token" }), { status: 200 }),
-      ),
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ rules, ruleToken: "signed-rule-token" }), { status: 200 }),
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ error: "AUTH_REQUIRED" }), { status: 401 }),
+        ),
     );
 
     render(
@@ -110,6 +115,35 @@ describe("RulesPage", () => {
     await waitFor(() => {
       expect(routerPush).toHaveBeenCalledWith("/auth?lang=en&mode=signup");
     });
+  });
+
+  it("continues an authenticated user without opening Auth", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ rules, ruleToken: "signed-rule-token" }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ next: "connect-telegram" }), { status: 200 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <RulesPage
+        searchParams={fulfilledSearchParams({
+          lang: "en",
+          request: "Track OpenAI official model and API announcements",
+        }) as never}
+      />,
+    );
+
+    await screen.findByRole("heading", { name: "Review what this Radar should watch" });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm rules" }));
+
+    await waitFor(() => {
+      expect(routerPush).toHaveBeenCalledWith("/connect-telegram?lang=en");
+    });
+    expect(routerPush).not.toHaveBeenCalledWith("/auth?lang=en&mode=signup");
   });
 
   it("keeps the request when switching the rules locale", async () => {

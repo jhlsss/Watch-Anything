@@ -9,6 +9,7 @@ import {
   writeRuleFlowStorage,
 } from "@/lib/auth/rule-flow-storage";
 import type { RuleFlowStorage } from "@/lib/auth/rule-flow-storage";
+import { submitPendingSetup } from "@/lib/auth/pending-setup";
 import { RulesForm } from "@/components/radar/rules-form";
 import { RulesHeader } from "@/components/radar/rules-header";
 import { normalizeLocale, getMessages } from "@/lib/i18n";
@@ -45,6 +46,7 @@ export default function RulesPage({
   const [parseAttempt, setParseAttempt] = useState(0);
   const [storedFlow, setStoredFlow] = useState<RuleFlowStorage | null>(null);
   const [storageReady, setStorageReady] = useState(Boolean(request?.trim()));
+  const [confirmationError, setConfirmationError] = useState(false);
   const prompt = request?.trim() || storedFlow?.originalPrompt || "";
   const resultMatchesPrompt = parsedPrompt === prompt && parsedAttempt === parseAttempt;
   const visibleStatus = !prompt
@@ -157,6 +159,50 @@ export default function RulesPage({
     setParseAttempt((attempt) => attempt + 1);
   };
 
+  const confirmRules = async (rules: RadarRules) => {
+    setImmutableEditError(false);
+    setConfirmationError(false);
+
+    if (!visibleRules || hasImmutableRuleChanges(rules, visibleRules)) {
+      setImmutableEditError(true);
+      return;
+    }
+
+    const currentFlow = readRuleFlowStorage();
+    const validatedRules = radarRulesSchema.safeParse(rules);
+
+    if (!currentFlow?.ruleToken || !validatedRules.success) {
+      setParseStatus("error");
+      return;
+    }
+
+    const nextFlow: RuleFlowStorage = {
+      originalPrompt: currentFlow.originalPrompt || rules.subject,
+      ruleToken: currentFlow.ruleToken,
+      editableDelta: toEditableRuleDelta(validatedRules.data),
+    };
+    writeRuleFlowStorage(nextFlow);
+
+    const pendingResult = await submitPendingSetup(nextFlow);
+
+    if (!pendingResult.ok) {
+      if (pendingResult.error === "AUTH_REQUIRED") {
+        router.push(`/auth?lang=${locale}&mode=signup`);
+        return;
+      }
+
+      setConfirmationError(true);
+      return;
+    }
+
+    if (pendingResult.next === "radar" && pendingResult.radarId) {
+      router.push(`/radars/${pendingResult.radarId}`);
+      return;
+    }
+
+    router.push(`/connect-telegram?lang=${locale}`);
+  };
+
   return (
     <main className="min-h-screen min-w-0 overflow-x-hidden bg-[#f8f8fb] text-slate-950">
       <RulesHeader
@@ -175,28 +221,7 @@ export default function RulesPage({
               originalRequest={prompt}
               locale={locale}
               backHref={`/?lang=${locale}`}
-              onConfirmRules={(rules) => {
-                setImmutableEditError(false);
-
-                if (hasImmutableRuleChanges(rules, visibleRules)) {
-                  setImmutableEditError(true);
-                  return;
-                }
-
-                const currentFlow = readRuleFlowStorage();
-
-                if (!currentFlow?.ruleToken) {
-                  setParseStatus("error");
-                  return;
-                }
-
-                writeRuleFlowStorage({
-                  originalPrompt: currentFlow.originalPrompt || rules.subject,
-                  ruleToken: currentFlow.ruleToken,
-                  editableDelta: toEditableRuleDelta(radarRulesSchema.parse(rules)),
-                });
-                router.push(`/auth?lang=${locale}&mode=signup`);
-              }}
+              onConfirmRules={confirmRules}
             />
           ) : (
             <section className="mx-auto max-w-3xl rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
@@ -258,6 +283,13 @@ export default function RulesPage({
               {locale === "zh-CN"
                 ? "只能编辑 Radar 名称、关注项和排除项。"
                 : "Only the Radar name, include topics, and exclude topics can be edited."}
+            </p>
+          ) : null}
+          {confirmationError ? (
+            <p className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm leading-6 text-rose-700" role="alert">
+              {locale === "zh-CN"
+                ? "Radar 创建失败，请稍后重试。"
+                : "We could not create this Radar. Please try again."}
             </p>
           ) : null}
       </div>
